@@ -6,6 +6,7 @@
  */
 
 import { getDb } from './db.js';
+import { syncSettingsToFirestore } from './settingsSync.js';
 
 // ---------------------------------------------------------------------------
 // Log an activity event
@@ -218,6 +219,7 @@ export function setAdminSetting(key, value, updatedBy = null) {
 
 /**
  * Set multiple admin settings at once.
+ * Dual-write: SQLite local + Firebase Firestore (async).
  * @param {Record<string, any>} settings
  * @param {string} [updatedBy]
  */
@@ -237,6 +239,7 @@ export function setAdminSettings(settings, updatedBy = null) {
     }
   });
   transaction(Object.entries(settings));
+  syncSettingsToFirestore(settings, updatedBy).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

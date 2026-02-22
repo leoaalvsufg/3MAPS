@@ -1,7 +1,7 @@
 import '@xyflow/react/dist/style.css';
 import './mindmapFlow.css';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -21,6 +21,12 @@ import {
 import { Plus, Trash2 } from 'lucide-react';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import type { MindElixirData, MindElixirNode } from '@/types/mindmap';
+
+export interface MindMapCanvasHandle {
+  fitView: () => void;
+  getViewportElement: () => HTMLElement | null;
+  getFlowInstance: () => ReactFlowInstance | null;
+}
 
 interface MindMapCanvasProps {
   data: MindElixirData;
@@ -303,7 +309,7 @@ function buildLayout(
   return { nodes, edges };
 }
 
-export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled }: MindMapCanvasProps) {
+export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>(function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled }, ref) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
@@ -400,6 +406,21 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
   const didInitialFitRef = useRef(false);
   const lastLayoutFingerprintRef = useRef('');
 
+  useImperativeHandle(ref, () => ({
+    fitView: () => {
+      if (!instance) return;
+      requestAnimationFrame(() => {
+        try {
+          instance.fitView({ padding: 0.15, duration: 400 });
+        } catch { /* ignore */ }
+      });
+    },
+    getViewportElement: () => {
+      return wrapperRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null;
+    },
+    getFlowInstance: () => instance,
+  }), [instance]);
+
   // Build a lightweight fingerprint of the layout so we can detect content changes
   // (e.g. definitions added by "Detalhado") even when the node count stays the same.
   const layoutFingerprint = useMemo(() => {
@@ -459,5 +480,5 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
       </MindmapActionsContext.Provider>
     </div>
   );
-}
+});
 

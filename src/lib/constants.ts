@@ -83,18 +83,45 @@ export const TEMPLATES: Template[] = [
 		promptModifier:
 			'Antes de gerar, priorize: fontes confiáveis, perguntas de clarificação quando necessário, e uma estrutura que maximize compreensão (pode sugerir diagrama/linha do tempo/fishbone quando fizer sentido).',
 	},
+	{
+		id: 'pesquisador_senior',
+		name: 'Pesquisador Sênior',
+		description: 'Pesquisa acadêmica com fontes reais (Semantic Scholar) para especialização, mestrado e doutorado',
+		icon: '🎓',
+		color: 'emerald',
+		structure: 'hierarchical',
+		promptModifier:
+			'Atue como pesquisador sênior acadêmico. Use EXCLUSIVAMENTE as fontes acadêmicas fornecidas como contexto. Estruture a análise com rigor metodológico: fundamentos teóricos, estado da arte, lacunas de pesquisa, metodologias e direções futuras. Nível: pós-graduação stricto sensu.',
+	},
 ];
 
 export const OPENROUTER_MODELS = [
   { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', description: 'Rápido e eficiente' },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Alta qualidade' },
+  { id: 'google/gemini-2.0-flash-lite-001', name: 'Gemini 2.0 Flash Lite', description: 'Muito econômico' },
   { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Equilibrado' },
+  { id: 'openai/gpt-4.1-mini', name: 'GPT-4.1 Mini', description: 'Qualidade com custo moderado' },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Alta qualidade' },
+  { id: 'anthropic/claude-3.5-haiku', name: 'Claude 3.5 Haiku', description: 'Rápido e leve' },
   { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', description: 'Open source' },
+  { id: 'meta-llama/llama-3.1-8b-instruct:free', name: 'Llama 3.1 8B (Free)', description: 'Gratuito via OpenRouter' },
+  { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen 2.5 72B (Free)', description: 'Gratuito via OpenRouter' },
+  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Free)', description: 'Gratuito via OpenRouter' },
 ];
 
 export const OPENAI_MODELS = [
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Rápido e econômico' },
+  { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', description: 'Econômico com melhor raciocínio' },
   { id: 'gpt-4o', name: 'GPT-4o', description: 'Alta qualidade' },
+  { id: 'gpt-4.1', name: 'GPT-4.1', description: 'Alta qualidade / contexto robusto' },
+];
+
+export const GEMINI_MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Rápido e atual' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Rápido e eficiente' },
+  { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', description: 'Muito econômico' },
+  { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (latest)', description: 'Compatibilidade ampla' },
+  { id: 'gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro (latest)', description: 'Alta qualidade' },
+  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Leve e rápido' },
 ];
 
 export const SUGGESTIONS = [
@@ -117,7 +144,7 @@ export const REPLICATE_IMAGE_MODEL = 'black-forest-labs/flux-schnell';
 export const DEFAULT_SETTINGS = {
   username: 'local',
   provider: 'openrouter' as const,
-  selectedModel: 'google/gemini-2.0-flash-001',
+  selectedModel: 'google/gemini-2.0-flash-lite-001',
   theme: 'system' as const,
   generateImages: false,
   language: 'pt-BR',

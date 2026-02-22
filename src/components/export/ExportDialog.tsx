@@ -19,7 +19,9 @@ import {
 } from './exportUtils';
 import type { SavedMap } from '@/types/mindmap';
 import type MindElixir from 'mind-elixir';
+import type { ReactFlowInstance } from '@xyflow/react';
 import { useUsageStore } from '@/stores/usage-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { PLANS } from '@/lib/plans';
 import { UpgradePrompt } from '@/components/monetization/UpgradePrompt';
 
@@ -33,6 +35,8 @@ interface ExportDialogProps {
    * Used by the ReactFlow mindmap renderer.
    */
   exportTarget?: HTMLElement | null;
+  viewportElement?: HTMLElement | null;
+  flowInstance?: ReactFlowInstance | null;
 }
 
 const FORMATS: { id: ExportFormat; label: string; description: string; icon: React.ReactNode }[] = [
@@ -62,15 +66,18 @@ const FORMATS: { id: ExportFormat; label: string; description: string; icon: Rea
   },
 ];
 
-export function ExportDialog({ open, onClose, map, mindElixirInstance, exportTarget }: ExportDialogProps) {
+export function ExportDialog({ open, onClose, map, mindElixirInstance, exportTarget, viewportElement, flowInstance }: ExportDialogProps) {
   const [loading, setLoading] = useState<ExportFormat | null>(null);
   const [error, setError] = useState('');
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [lockedFormat, setLockedFormat] = useState<string>('');
 
   const limits = useUsageStore((s) => s.limits);
-  // Determine allowed formats: use server-fetched limits if available, else fall back to free plan
-  const allowedFormats = limits?.exportFormats ?? PLANS.free.exportFormats;
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
+  // Admin is enterprise+ on UI, even if usage limits are not loaded yet.
+  const allowedFormats = isAdmin
+    ? PLANS.admin.exportFormats
+    : (limits?.exportFormats ?? PLANS.free.exportFormats);
 
   const handleExport = async (format: ExportFormat) => {
     // Check if format is allowed for the user's plan
@@ -92,7 +99,7 @@ export function ExportDialog({ open, onClose, map, mindElixirInstance, exportTar
       switch (format) {
         case 'png':
           if (mindElixirInstance) await exportAsPng(mindElixirInstance, filename);
-          else await exportElementAsPng(exportTarget!, filename);
+          else await exportElementAsPng(exportTarget!, filename, viewportElement, flowInstance);
           break;
         case 'svg':
           if (!mindElixirInstance) {
@@ -102,7 +109,7 @@ export function ExportDialog({ open, onClose, map, mindElixirInstance, exportTar
           break;
         case 'pdf':
           if (mindElixirInstance) await exportAsPdf(mindElixirInstance, map);
-          else await exportElementAsPdf(exportTarget!, map);
+          else await exportElementAsPdf(exportTarget!, map, viewportElement, flowInstance);
           break;
         case 'markdown':
           exportAsMarkdown(map);

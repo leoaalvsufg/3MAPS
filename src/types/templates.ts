@@ -7,7 +7,8 @@ export type TemplateId =
   | 'problema'
   | 'comparacao'
   | 'timeline'
-  | 'pensamento_profundo';
+  | 'pensamento_profundo'
+  | 'pesquisador_senior';
 
 export interface Template {
   id: TemplateId;

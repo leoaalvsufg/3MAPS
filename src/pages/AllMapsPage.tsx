@@ -20,11 +20,12 @@ function MapListRow({ map }: { map: SavedMap }) {
   const navigate = useNavigate();
   const deleteMap = useMapsStore((s) => s.deleteMap);
   const template = TEMPLATES.find((t) => t.id === map.template);
+  const displayTitle = map.ownerPath ?? map.title;
 
   return (
     <div
       role="article"
-      aria-label={`Mapa mental: ${map.title}`}
+      aria-label={`Mapa mental: ${displayTitle}`}
       onClick={() => navigate(`/map/${map.id}`)}
       className="group flex items-center gap-4 px-4 py-3 bg-card border border-border rounded-xl cursor-pointer hover:border-primary/50 hover:shadow-sm transition-all"
     >
@@ -35,7 +36,7 @@ function MapListRow({ map }: { map: SavedMap }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <h3 className="font-semibold text-sm text-foreground truncate">{map.title}</h3>
+        <h3 className="font-semibold text-sm text-foreground truncate">{displayTitle}</h3>
         <p className="text-xs text-muted-foreground truncate mt-0.5">{map.query}</p>
       </div>
 
@@ -67,10 +68,10 @@ function MapListRow({ map }: { map: SavedMap }) {
         size="sm"
         onClick={(e) => {
           e.stopPropagation();
-          if (confirm(`Excluir "${map.title}"?`)) deleteMap(map.id);
+          if (confirm(`Excluir "${displayTitle}"?`)) deleteMap(map.id);
         }}
         className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground shrink-0"
-        aria-label={`Excluir mapa "${map.title}"`}
+        aria-label={`Excluir mapa "${displayTitle}"`}
       >
         ✕
       </Button>
@@ -85,16 +86,15 @@ function MapListRow({ map }: { map: SavedMap }) {
 export function AllMapsPage() {
   const navigate = useNavigate();
   const maps = useMapsStore((s) => s.maps);
-  const getAllTags = useMapsStore((s) => s.getAllTags);
   const loadAllMapsFromServer = useMapsStore((s) => s.loadAllMapsFromServer);
   const [search, setSearch] = useState('');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const sortBy = useUIStore((s) => s.sortBy);
   const setSortBy = useUIStore((s) => s.setSortBy);
   const viewMode = useUIStore((s) => s.viewMode);
   const setViewMode = useUIStore((s) => s.setViewMode);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
 
   // Sync maps from server when page mounts (if authenticated)
   useEffect(() => {
@@ -103,8 +103,6 @@ export function AllMapsPage() {
       void loadAllMapsFromServer().finally(() => setSyncing(false));
     }
   }, [isAuthenticated, loadAllMapsFromServer]);
-
-  const allTags = getAllTags();
 
   const filtered = useMemo(() => {
     let result = [...maps];
@@ -119,10 +117,6 @@ export function AllMapsPage() {
       );
     }
 
-    if (activeTag) {
-      result = result.filter((m) => m.tags.includes(activeTag));
-    }
-
     if (sortBy === 'title') {
       result.sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
     } else if (sortBy === 'template') {
@@ -132,7 +126,7 @@ export function AllMapsPage() {
     }
 
     return result;
-  }, [maps, search, activeTag, sortBy]);
+  }, [maps, search, sortBy]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -141,7 +135,7 @@ export function AllMapsPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Map className="h-5 w-5 text-primary" />
-            <h1 className="text-xl font-bold">Meus Mapas</h1>
+            <h1 className="text-xl font-bold">{isAdmin ? 'Todos os Mapas' : 'Meus Mapas'}</h1>
             <span className="text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
               {maps.length}
             </span>
@@ -218,30 +212,6 @@ export function AllMapsPage() {
             <option value="template">Template</option>
           </select>
         </div>
-
-        {/* Tag filters */}
-        {allTags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            <button
-              onClick={() => setActiveTag(null)}
-              className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                !activeTag
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'border-border text-muted-foreground hover:border-foreground/30'
-              }`}
-            >
-              Todas
-            </button>
-            {allTags.map((tag) => (
-              <TagBadge
-                key={tag}
-                name={tag}
-                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                active={activeTag === tag}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Content */}

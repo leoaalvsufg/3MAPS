@@ -34,7 +34,7 @@ export function InputPanel() {
   const setGenerationProgress = useMapsStore((s) => s.setGenerationProgress);
   const setGenerationError = useMapsStore((s) => s.setGenerationError);
   const resetGeneration = useMapsStore((s) => s.resetGeneration);
-  const hasApiKey = useSettingsStore((s) => s.hasApiKey);
+  const hasAnyApiKey = useSettingsStore((s) => s.hasAnyApiKey);
   const checkAction = useUsageStore((s) => s.checkAction);
 
   const isGenerating = ['analyzing', 'generating', 'article', 'image'].includes(generation.status);
@@ -51,7 +51,7 @@ export function InputPanel() {
       setLocalError('Digite um tópico ou pergunta para gerar o mapa.');
       return;
     }
-    if (!hasApiKey()) {
+    if (!hasAnyApiKey()) {
       setLocalError('Configure sua chave de API nas Configurações antes de continuar.');
       return;
     }

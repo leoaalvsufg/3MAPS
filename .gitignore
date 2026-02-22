@@ -36,3 +36,15 @@ screenshots/
 
 # Backup zips
 *.zip
+*.tar.gz
+
+# Firebase service account key (never commit)
+server/firebase-service-account.json
+
+# Deploy SSH key (temporary, never commit)
+deploy_key
+deploy_key.pub
+
+# Deploy (credenciais e instruções sensíveis)
+deploy.md
+deploy.ps1

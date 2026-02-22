@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Undo2, Redo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useUndoRedo } from '@/lib/useUndoRedo';
-import { MindMapCanvas } from '@/components/generation/MindMapCanvas';
+import { MindMapCanvas, type MindMapCanvasHandle } from '@/components/generation/MindMapCanvas';
 import { PostGenActions } from '@/components/generation/PostGenActions';
 import { GraphCanvas } from '@/components/graphs/GraphCanvas';
 import { DetailsPanel } from '@/components/layout/DetailsPanel';
@@ -15,7 +15,8 @@ const ExportDialog = lazy(() =>
 );
 import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { callLLM, parseJSON } from '@/services/llm/client';
+import { parseJSON } from '@/services/llm/client';
+import { callRoutedLLM } from '@/services/llm/routedClient';
 		import { getNodeByNodeDetailedRefinementPrompt, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
@@ -30,6 +31,7 @@ export function MapPage() {
   const settings = useSettingsStore();
   const username = useSettingsStore((s) => s.username);
 	const exportTargetRef = useRef<HTMLElement | null>(null);
+  const canvasRef = useRef<MindMapCanvasHandle>(null);
   const [isLoading, setIsLoading] = useState(false);
  const postGenInFlightRef = useRef(false);
  const [activePostGenAction, setActivePostGenAction] = useState<
@@ -119,7 +121,7 @@ export function MapPage() {
   }, [id]); // Only depends on map ID
 
 	const handlePostGenAction = async (action: 'conciso' | 'detalhado' | 'traduzir' | 'regenerar') => {
-    if (!map || !map.analysis || !settings.hasApiKey()) return;
+    if (!map || !map.analysis || !settings.hasAnyApiKey()) return;
 		// Hard guard to avoid duplicate clicks / double-requests while processing.
 		if (postGenInFlightRef.current) return;
 		postGenInFlightRef.current = true;
@@ -142,12 +144,10 @@ export function MapPage() {
 					nodes: nodesForRefinement,
 				});
 
-				const result = await callLLM(
+				const result = await callRoutedLLM(
+					'refine_detailed',
 					[{ role: 'user', content: prompt }],
 					{
-						provider: settings.provider,
-						apiKey: await settings.getActiveApiKey(),
-						model: settings.selectedModel,
 						maxTokens: 4200,
 						temperature: 0.35,
 					}
@@ -172,9 +172,10 @@ export function MapPage() {
 			}
 
 	    const prompt = getPostGenPrompt(action, map.analysis);
-	    const result = await callLLM(
+	    const result = await callRoutedLLM(
+	      'postgen',
 	      [{ role: 'user', content: prompt }],
-	      { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel, maxTokens: 6000 }
+	      { maxTokens: 6000 }
 	    );
 	    const newData = normalizeMindElixirData(parseJSON<MindElixirData>(result));
 	    updateMap(map.id, { mindElixirData: newData });
@@ -471,6 +472,7 @@ export function MapPage() {
             onDetailed={() => handlePostGenAction('detalhado')}
             onTranslate={() => handlePostGenAction('traduzir')}
             onRegenerate={() => handlePostGenAction('regenerar')}
+            onReorganize={() => canvasRef.current?.fitView()}
             onExport={handleExport}
             onChat={handleChat}
 				graphType={graphType}
@@ -486,6 +488,7 @@ export function MapPage() {
 	      <div className="flex-1 overflow-hidden bg-muted/30">
 				{graphType === 'mindmap' ? (
 						<MindMapCanvas
+							ref={canvasRef}
 							data={map.mindElixirData}
 							onReady={handleReady}
 							onChange={(next) => {
@@ -523,6 +526,8 @@ export function MapPage() {
           map={map}
           mindElixirInstance={null}
           exportTarget={exportTargetRef.current}
+          viewportElement={canvasRef.current?.getViewportElement() ?? null}
+          flowInstance={canvasRef.current?.getFlowInstance() ?? null}
         />
       </Suspense>
     </div>

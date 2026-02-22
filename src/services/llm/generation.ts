@@ -8,12 +8,19 @@ import type {
 	SavedMap,
 } from '@/types/mindmap';
 import type { TemplateId } from '@/types/templates';
-import { callLLM, parseJSON } from './client';
+import { parseJSON } from './client';
+import { callRoutedLLM } from './routedClient';
 import {
   getAnalysisPrompt,
 	getDeepThoughtPreflightPrompt,
+  getQueryRefinementPrompt,
   getMindMapPrompt,
   getArticlePrompt,
+  getAcademicSearchTermsPrompt,
+  getAcademicPreflightPrompt,
+  getAcademicAnalysisPrompt,
+  getAcademicMindMapPrompt,
+  getAcademicArticlePrompt,
 } from './prompts';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import { useMapsStore } from '@/stores/maps-store';
@@ -66,7 +73,7 @@ export async function generateMindMap(
   const settings = useSettingsStore.getState();
   const mapsStore = useMapsStore.getState();
 
-  if (!settings.hasApiKey()) {
+  if (!settings.hasAnyApiKey()) {
     onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
     return;
   }
@@ -83,12 +90,6 @@ export async function generateMindMap(
     // Fail open — don't block generation if usage check fails
   }
 
-  const llmOptions = {
-    provider: settings.provider,
-    apiKey: await settings.getActiveApiKey(),
-    model: settings.selectedModel,
-  };
-
   try {
 		let effectiveQuery = query;
 		let graphType: GraphType = 'mindmap';
@@ -101,9 +102,10 @@ export async function generateMindMap(
 			onProgress(5, 'Pensamento profundo: levantando fontes e contexto...');
 			mapsStore.setGenerationStatus('analyzing');
 
-			const preflightText = await callLLM(
+			const preflightText = await callRoutedLLM(
+				'preflight',
 				[{ role: 'user', content: getDeepThoughtPreflightPrompt(query) }],
-				{ ...llmOptions, temperature: 0.2, maxTokens: 2200 }
+				{ temperature: 0.2, maxTokens: 4096 }
 			);
 
 			const preflight = parseJSON<DeepThoughtPreflightResult>(preflightText);
@@ -152,16 +154,168 @@ export async function generateMindMap(
 				null,
 				2
 			);
+
+			// Reanálise: refinar a pergunta antes da análise para melhor qualidade
+			onProgress(8, 'Refinando pergunta para análise...');
+			try {
+				const refinedText = await callRoutedLLM(
+					'preflight',
+					[{ role: 'user', content: getQueryRefinementPrompt(effectiveQuery, extraContext) }],
+					{ temperature: 0.2, maxTokens: 500 }
+				);
+				const trimmed = refinedText.trim();
+				if (trimmed.length > 0) effectiveQuery = trimmed;
+			} catch {
+				// Se falhar o refinamento, segue com effectiveQuery atual
+			}
+		}
+
+		// Stage 0-B (pesquisador_senior): busca acadêmica real + preflight acadêmico
+		let papersContext = '';
+		if (templateId === 'pesquisador_senior') {
+			onProgress(3, 'Pesquisador Sênior: extraindo termos de busca acadêmica...');
+			mapsStore.setGenerationStatus('analyzing');
+
+			// Step 1: Extract academic search terms via LLM
+			const searchTermsText = await callRoutedLLM(
+				'preflight',
+				[{ role: 'user', content: getAcademicSearchTermsPrompt(query) }],
+				{ temperature: 0.1, maxTokens: 500 }
+			);
+			const searchTerms = parseJSON<{ search_queries?: string[]; suggested_year_from?: number }>(searchTermsText);
+			const queries = (searchTerms.search_queries ?? [query]).filter(Boolean).slice(0, 5);
+			const yearFrom = searchTerms.suggested_year_from ?? 2018;
+
+			// Step 2: Search Semantic Scholar for real papers
+			onProgress(8, 'Buscando papers acadêmicos no Semantic Scholar...');
+			const allPapers: Array<{ title: string; authors: string[]; year: number | null; citationCount: number; abstract: string | null; doi: string | null; url: string | null; journal: string | null; type: string }> = [];
+			const seenTitles = new Set<string>();
+
+			for (const q of queries) {
+				try {
+					const token = getAuthToken();
+					const res = await fetch(`/api/academic/search?query=${encodeURIComponent(q)}&limit=10&yearFrom=${yearFrom}`, {
+						headers: token ? { Authorization: `Bearer ${token}` } : {},
+					});
+					if (res.ok) {
+						const data = await res.json();
+						for (const p of (data.papers ?? [])) {
+							const key = p.title.toLowerCase().trim();
+							if (!seenTitles.has(key)) {
+								seenTitles.add(key);
+								allPapers.push(p);
+							}
+						}
+					}
+				} catch {
+					// Continue with other queries
+				}
+			}
+
+			// Sort by citation count (most cited first)
+			allPapers.sort((a, b) => (b.citationCount ?? 0) - (a.citationCount ?? 0));
+			const topPapers = allPapers.slice(0, 15);
+
+			// Format papers as context for prompts
+			papersContext = topPapers
+				.map((p, i) => {
+					const authors = p.authors.slice(0, 3).join(', ') + (p.authors.length > 3 ? ' et al.' : '');
+					const cite = `[${i + 1}] ${authors} (${p.year ?? 's.d.'}). "${p.title}".`;
+					const journal = p.journal ? ` ${p.journal}.` : '';
+					const doi = p.doi ? ` DOI: ${p.doi}` : '';
+					const citations = p.citationCount > 0 ? ` [${p.citationCount} citações]` : '';
+					const abs = p.abstract ? `\n    Resumo: ${p.abstract.slice(0, 300)}${p.abstract.length > 300 ? '…' : ''}` : '';
+					return `${cite}${journal}${doi}${citations}${abs}`;
+				})
+				.join('\n\n');
+
+			// Convert papers to sources
+			sources = topPapers.map((p) => ({
+				title: p.title,
+				author: p.authors.slice(0, 3).join(', ') + (p.authors.length > 3 ? ' et al.' : ''),
+				year: String(p.year ?? ''),
+				type: (p.type ?? 'paper') as DeepThoughtSource['type'],
+				url: p.url ?? '',
+				why: p.citationCount > 0 ? `${p.citationCount} citações` : 'Relevante para o tema',
+			}));
+
+			// Step 3: Academic preflight (with real papers as context)
+			onProgress(12, 'Analisando literatura acadêmica...');
+			const preflightText = await callRoutedLLM(
+				'preflight',
+				[{ role: 'user', content: getAcademicPreflightPrompt(query, papersContext) }],
+				{ temperature: 0.2, maxTokens: 4096 }
+			);
+			const preflight = parseJSON<DeepThoughtPreflightResult>(preflightText);
+
+			// Merge LLM-suggested sources (if new ones)
+			if (Array.isArray(preflight.sources)) {
+				for (const s of preflight.sources) {
+					if (s.title && !sources.some((ex) => ex.title.toLowerCase() === s.title.toLowerCase())) {
+						sources.push(s);
+					}
+				}
+			}
+
+			const questions = (preflight.clarifying_questions ?? []).filter(Boolean).slice(0, 4);
+			if (preflight.needs_clarification && questions.length > 0 && callbacks.onRequestClarification) {
+				const resp = await callbacks.onRequestClarification({
+					questions,
+					assumptions: preflight.assumptions_if_no_answer ?? [],
+					sources,
+					recommended: {
+						mode: 'mindmap',
+						graphType: 'mindmap',
+						reason: preflight.recommended_presentation?.reason ?? 'Mapa mental para revisão de literatura',
+					},
+				});
+
+				if (!resp) {
+					onError('Geração cancelada.');
+					return;
+				}
+
+				const answers = resp.answers ?? [];
+				effectiveQuery = `${query}\n\nDelimitação do escopo:\n${questions
+					.map((q, i) => `- ${q}\n  R: ${(answers[i] ?? '').trim()}`)
+					.join('\n')}`;
+			}
+
+			extraContext = JSON.stringify({
+				academic_papers_count: topPapers.length,
+				field: preflight.field_of_study ?? searchTerms.search_queries?.[0] ?? '',
+				theoretical_frameworks: (preflight as Record<string, unknown>).theoretical_frameworks ?? [],
+				research_gaps: (preflight as Record<string, unknown>).research_gaps ?? [],
+			}, null, 2);
+
+			// Refine query
+			onProgress(15, 'Refinando pergunta de pesquisa...');
+			try {
+				const refinedText = await callRoutedLLM(
+					'preflight',
+					[{ role: 'user', content: getQueryRefinementPrompt(effectiveQuery, extraContext) }],
+					{ temperature: 0.2, maxTokens: 500 }
+				);
+				const trimmed = refinedText.trim();
+				if (trimmed.length > 0) effectiveQuery = trimmed;
+			} catch { /* keep current */ }
 		}
 
     // Stage 1: Analysis
-    onProgress(10, 'Analisando conteúdo...');
+    onProgress(templateId === 'pesquisador_senior' ? 20 : 10, 'Analisando conteúdo...');
     mapsStore.setGenerationStatus('analyzing');
 
-    const analysisText = await callLLM(
-			[{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
-      { ...llmOptions, temperature: 0.3 }
-    );
+    const analysisText = templateId === 'pesquisador_senior'
+      ? await callRoutedLLM(
+          'analysis',
+          [{ role: 'user', content: getAcademicAnalysisPrompt(effectiveQuery, papersContext, extraContext) }],
+          { temperature: 0.3, maxTokens: 4096 }
+        )
+      : await callRoutedLLM(
+          'analysis',
+          [{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
+          { temperature: 0.3, maxTokens: 4096 }
+        );
 
     const analysis = parseJSON<AnalysisResult>(analysisText);
     onProgress(30, 'Análise concluída. Gerando mapa mental...');
@@ -169,16 +323,31 @@ export async function generateMindMap(
     // Stage 2 & 3: Mind map + Article (parallel)
     mapsStore.setGenerationStatus('generating');
 
-    const [mindMapText, articleText] = await Promise.all([
-      callLLM(
-        [{ role: 'user', content: getMindMapPrompt(analysis) }],
-        { ...llmOptions, temperature: 0.4, maxTokens: 8000 }
-      ),
-      callLLM(
-        [{ role: 'user', content: getArticlePrompt(analysis) }],
-        { ...llmOptions, temperature: 0.7, maxTokens: 4000 }
-      ),
-    ]);
+    const [mindMapText, articleText] = templateId === 'pesquisador_senior'
+      ? await Promise.all([
+          callRoutedLLM(
+            'mindmap',
+            [{ role: 'user', content: getAcademicMindMapPrompt(analysis, papersContext) }],
+            { temperature: 0.3, maxTokens: 10000 }
+          ),
+          callRoutedLLM(
+            'article',
+            [{ role: 'user', content: getAcademicArticlePrompt(analysis, papersContext) }],
+            { temperature: 0.5, maxTokens: 6000 }
+          ),
+        ])
+      : await Promise.all([
+          callRoutedLLM(
+            'mindmap',
+            [{ role: 'user', content: getMindMapPrompt(analysis) }],
+            { temperature: 0.4, maxTokens: 8000 }
+          ),
+          callRoutedLLM(
+            'article',
+            [{ role: 'user', content: getArticlePrompt(analysis) }],
+            { temperature: 0.7, maxTokens: 4000 }
+          ),
+        ]);
 
     onProgress(70, 'Mapa e artigo gerados. Finalizando...');
 
@@ -198,16 +367,13 @@ export async function generateMindMap(
 
     // normalizeMindElixirData already ensures ids/topic/children and distributes root children.
 
-    // Stage 4: Image (optional)
+    // Stage 4: Image (optional) — chave Replicate no servidor
     let imageUrl: string | undefined;
-    if (generateImage && settings.replicateApiKey) {
+    if (generateImage) {
       mapsStore.setGenerationStatus('image');
       onProgress(80, 'Gerando imagem ilustrativa...');
       try {
-        imageUrl = await generateReplicateImage(
-          analysis.central_theme,
-          settings.replicateApiKey
-        );
+        imageUrl = await generateReplicateImageViaServer(analysis.central_theme);
       } catch {
         // Image generation is optional, don't fail
         console.warn('Image generation failed, continuing without image');
@@ -291,39 +457,35 @@ function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?
   return `${md}\n`;
 }
 
-async function generateReplicateImage(
-  theme: string,
-  apiKey: string
-): Promise<string> {
-  const prompt = `A beautiful, detailed illustration representing the concept of "${theme}". Digital art, vibrant colors, professional quality.`;
+async function generateReplicateImageViaServer(theme: string): Promise<string> {
+  const token = getAuthToken();
+  if (!token) throw new Error('Login obrigatório');
 
-  const response = await fetch('/api/replicate/v1/models/black-forest-labs/flux-schnell/predictions', {
+  const response = await fetch('/api/image/generate', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Token ${apiKey}`,
+      Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      input: { prompt, width: 1024, height: 576, num_outputs: 1 },
-    }),
+    body: JSON.stringify({ theme }),
   });
 
-  if (!response.ok) throw new Error('Replicate API error');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? 'Erro ao gerar imagem');
 
-  const prediction = await response.json();
-  const predictionId = prediction.id;
+  return data.imageUrl ?? '';
+}
 
-  // Poll for result
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const poll = await fetch(`/api/replicate/v1/predictions/${predictionId}`, {
-      headers: { Authorization: `Token ${apiKey}` },
-    });
-    const result = await poll.json();
-    if (result.status === 'succeeded') return result.output?.[0] ?? '';
-    if (result.status === 'failed') throw new Error('Image generation failed');
+function getAuthToken(): string {
+  try {
+    const raw = localStorage.getItem('mindmap-auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.state?.token ?? '';
+    }
+  } catch {
+    // ignore
   }
-
-  throw new Error('Image generation timed out');
+  return '';
 }
 

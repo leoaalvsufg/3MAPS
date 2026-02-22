@@ -4,13 +4,472 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/auth-store';
-import { forgotPassword, resetPassword } from '@/services/api/authApi';
+import { forgotPassword, resetPassword, requestMagicLink } from '@/services/api/authApi';
+import { APP_VERSION } from '@/lib/version';
+import { isFirebaseConfigured, getFirebaseAuth, GoogleAuthProvider } from '@/lib/firebase';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
+} from 'firebase/auth';
 
 // ---------------------------------------------------------------------------
-// Login form
+// Firebase login (email/senha + Google)
 // ---------------------------------------------------------------------------
 
-function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
+function FirebaseLoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
+  const navigate = useNavigate();
+  const loginWithFirebase = useAuthStore((s) => s.loginWithFirebase);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleEmailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!email.trim() || !password) {
+      setError('Informe e-mail e senha.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const userCred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const idToken = await userCred.user.getIdToken();
+      await loginWithFirebase(idToken);
+      navigate('/');
+    } catch (err: unknown) {
+      const code = err && typeof err === 'object' && 'code' in err ? (err as { code: string }).code : '';
+      const msg = code === 'auth/user-not-found'
+        ? 'E-mail não encontrado.'
+        : code === 'auth/wrong-password'
+          ? 'Senha incorreta.'
+          : code === 'auth/invalid-credential'
+            ? 'E-mail ou senha incorretos.'
+            : err instanceof Error
+              ? err.message
+              : 'Erro ao entrar. Tente novamente.';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setError(null);
+    setLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const userCred = await signInWithPopup(auth, new GoogleAuthProvider());
+      const idToken = await userCred.user.getIdToken();
+      await loginWithFirebase(idToken);
+      navigate('/');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Erro ao entrar com Google.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <form onSubmit={handleEmailSubmit} className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="firebase-login-email" className="text-sm font-medium text-slate-700">
+            E-mail
+          </label>
+          <Input
+            id="firebase-login-email"
+            type="email"
+            autoComplete="email"
+            placeholder="seu@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="firebase-login-password" className="text-sm font-medium text-slate-700">
+              Senha
+            </label>
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+            >
+              Esqueci minha senha
+            </button>
+          </div>
+          <Input
+            id="firebase-login-password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+          />
+        </div>
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={loading} className="w-full">
+          {loading ? 'Entrando…' : 'Entrar'}
+        </Button>
+      </form>
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-slate-200" />
+        </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="bg-white px-2 text-slate-500">ou</span>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        disabled={loading}
+        onClick={handleGoogleSignIn}
+      >
+        <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+          />
+          <path
+            fill="currentColor"
+            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+          />
+          <path
+            fill="currentColor"
+            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+          />
+          <path
+            fill="currentColor"
+            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+          />
+        </svg>
+        Entrar com Google
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Firebase register (email/senha + Google)
+// ---------------------------------------------------------------------------
+
+function FirebaseRegisterForm() {
+  const navigate = useNavigate();
+  const loginWithFirebase = useAuthStore((s) => s.loginWithFirebase);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleEmailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!email.trim()) {
+      setError('Informe o e-mail.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('As senhas não coincidem.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const userCred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const idToken = await userCred.user.getIdToken();
+      await loginWithFirebase(idToken);
+      navigate('/');
+    } catch (err: unknown) {
+      const code = err && typeof err === 'object' && 'code' in err ? (err as { code: string }).code : '';
+      const msg = code === 'auth/email-already-in-use'
+        ? 'Este e-mail já está em uso.'
+        : err instanceof Error
+          ? err.message
+          : 'Erro ao criar conta. Tente novamente.';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setError(null);
+    setLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const userCred = await signInWithPopup(auth, new GoogleAuthProvider());
+      const idToken = await userCred.user.getIdToken();
+      await loginWithFirebase(idToken);
+      navigate('/');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Erro ao criar conta com Google.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <form onSubmit={handleEmailSubmit} className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="firebase-reg-email" className="text-sm font-medium text-slate-700">
+            E-mail
+          </label>
+          <Input
+            id="firebase-reg-email"
+            type="email"
+            autoComplete="email"
+            placeholder="seu@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="firebase-reg-password" className="text-sm font-medium text-slate-700">
+            Senha
+          </label>
+          <Input
+            id="firebase-reg-password"
+            type="password"
+            autoComplete="new-password"
+            placeholder="••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+          />
+          <p className="text-xs text-slate-400">Mínimo de 6 caracteres.</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="firebase-reg-confirm" className="text-sm font-medium text-slate-700">
+            Confirmar senha
+          </label>
+          <Input
+            id="firebase-reg-confirm"
+            type="password"
+            autoComplete="new-password"
+            placeholder="••••••"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            disabled={loading}
+          />
+        </div>
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={loading} className="w-full">
+          {loading ? 'Criando conta…' : 'Criar conta'}
+        </Button>
+      </form>
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-slate-200" />
+        </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="bg-white px-2 text-slate-500">ou</span>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        disabled={loading}
+        onClick={handleGoogleSignIn}
+      >
+        <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+          <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+          <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+          <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+        </svg>
+        Criar conta com Google
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login form (legacy — nome de usuário)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Magic link verify (ao clicar no link no e-mail)
+// ---------------------------------------------------------------------------
+
+function MagicLinkVerify({ token, onSuccess }: { token: string; onSuccess: () => void }) {
+  const navigate = useNavigate();
+  const loginWithMagicLink = useAuthStore((s) => s.loginWithMagicLink);
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        await loginWithMagicLink(token);
+        if (!mounted) return;
+        setStatus('success');
+        navigate('/');
+      } catch (err) {
+        if (!mounted) return;
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; };
+  }, [token, loginWithMagicLink, navigate]);
+
+  if (status === 'loading') {
+    return (
+      <div className="flex flex-col gap-4 text-center py-8">
+        <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center mx-auto animate-pulse">
+          <svg className="w-7 h-7 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <p className="text-sm text-slate-500">Validando seu link…</p>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </div>
+        <p className="text-sm text-red-600">Link inválido ou expirado. Solicite um novo link.</p>
+        <Button variant="outline" onClick={onSuccess} className="w-full">
+          Voltar ao login
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Magic link form (enviar link por e-mail)
+// ---------------------------------------------------------------------------
+
+function MagicLinkForm({ onBack }: { onBack: () => void }) {
+  const [login, setLogin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (!login.trim()) {
+      setError('Informe o e-mail ou nome de usuário.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await requestMagicLink(login.trim());
+      setSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao enviar link. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (success) {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-slate-900 mb-1">Link enviado!</h3>
+          <p className="text-sm text-slate-500">
+            Se o e-mail ou usuário estiver cadastrado, você receberá um link para entrar em breve.
+            Verifique também a pasta de spam.
+          </p>
+        </div>
+        <Button variant="outline" onClick={onBack} className="w-full">
+          Voltar ao login
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div>
+        <h3 className="text-base font-semibold text-slate-900 mb-1">Entrar com link mágico</h3>
+        <p className="text-sm text-slate-500">
+          Informe o e-mail ou nome de usuário da sua conta. Enviaremos um link de acesso único por e-mail.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="magic-login" className="text-sm font-medium text-slate-700">
+          E-mail ou nome de usuário
+        </label>
+        <Input
+          id="magic-login"
+          type="text"
+          autoComplete="username email"
+          placeholder="seu@email.com ou nome_de_usuario"
+          value={login}
+          onChange={(e) => setLogin(e.target.value)}
+          disabled={loading}
+        />
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      <Button type="submit" disabled={loading} className="w-full">
+        {loading ? 'Enviando…' : 'Enviar link mágico'}
+      </Button>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors text-center"
+      >
+        ← Voltar ao login
+      </button>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login form (legacy — nome de usuário)
+// ---------------------------------------------------------------------------
+
+function LoginForm({ onForgotPassword, onMagicLink }: { onForgotPassword: () => void; onMagicLink: () => void }) {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
 
@@ -24,7 +483,7 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
     setError(null);
 
     if (!username.trim()) {
-      setError('Informe o nome de usuário.');
+      setError('Informe o e-mail ou nome de usuário.');
       return;
     }
     if (!password) {
@@ -47,13 +506,13 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="login-username" className="text-sm font-medium text-slate-700">
-          Nome de usuário
+          E-mail ou nome de usuário
         </label>
         <Input
           id="login-username"
           type="text"
-          autoComplete="username"
-          placeholder="seu_usuario"
+          autoComplete="username email"
+          placeholder="seu@email.com ou nome_de_usuario"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           disabled={loading}
@@ -65,13 +524,23 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
           <label htmlFor="login-password" className="text-sm font-medium text-slate-700">
             Senha
           </label>
-          <button
-            type="button"
-            onClick={onForgotPassword}
-            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
-          >
-            Esqueci minha senha
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onMagicLink}
+              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+            >
+              Entrar com link mágico
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+            >
+              Esqueci minha senha
+            </button>
+          </div>
         </div>
         <Input
           id="login-password"
@@ -98,7 +567,126 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Register form
+// Login tab: Firebase (email/Google) or legacy username
+// ---------------------------------------------------------------------------
+
+function LoginTabContent({ onForgotPassword, onMagicLink }: { onForgotPassword: () => void; onMagicLink: () => void }) {
+  const [showLegacy, setShowLegacy] = useState(false);
+  const useFirebase = isFirebaseConfigured();
+
+  if (useFirebase && !showLegacy) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-xs text-slate-500 -mt-1">
+          Use e-mail e senha, login social (Google) ou conta local (e-mail/nome de usuário).
+        </p>
+        <FirebaseLoginForm onForgotPassword={onForgotPassword} />
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-white px-2 text-slate-500">ou</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowLegacy(true)}
+          className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors"
+        >
+          Entrar com e-mail ou nome de usuário (conta local)
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <LoginForm onForgotPassword={onForgotPassword} onMagicLink={onMagicLink} />
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-slate-200" />
+        </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="bg-white px-2 text-slate-500">ou</span>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        disabled={!useFirebase}
+        onClick={() => setShowLegacy(false)}
+      >
+        Entrar com Google
+      </Button>
+      {!useFirebase && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Login social disponível após configurar Firebase (VITE_FIREBASE_API_KEY e VITE_FIREBASE_APP_ID).
+        </p>
+      )}
+      {useFirebase && (
+        <button
+          type="button"
+          onClick={() => setShowLegacy(false)}
+          className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors"
+        >
+          Entrar com e-mail ou Google
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Register tab: Firebase or legacy username
+// ---------------------------------------------------------------------------
+
+function RegisterTabContent() {
+  const [showLegacy, setShowLegacy] = useState(false);
+  const useFirebase = isFirebaseConfigured();
+
+  if (useFirebase && !showLegacy) {
+    return (
+      <div className="flex flex-col gap-4">
+        <FirebaseRegisterForm />
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-white px-2 text-slate-500">ou</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowLegacy(true)}
+          className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors"
+        >
+          Criar conta com nome de usuário
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <RegisterForm />
+      {useFirebase && (
+        <button
+          type="button"
+          onClick={() => setShowLegacy(false)}
+          className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors"
+        >
+          Criar conta com e-mail ou Google
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Register form (legacy)
 // ---------------------------------------------------------------------------
 
 function RegisterForm() {
@@ -218,6 +806,7 @@ function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const useFirebase = isFirebaseConfigured();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -234,7 +823,11 @@ function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
 
     setLoading(true);
     try {
-      await forgotPassword(email.trim().toLowerCase());
+      if (useFirebase) {
+        await firebaseSendPasswordResetEmail(getFirebaseAuth(), email.trim());
+      } else {
+        await forgotPassword(email.trim().toLowerCase());
+      }
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao enviar e-mail. Tente novamente.');
@@ -427,20 +1020,23 @@ function ResetPasswordForm({ token, onSuccess }: { token: string; onSuccess: () 
 // Auth page
 // ---------------------------------------------------------------------------
 
-type AuthView = 'tabs' | 'forgot' | 'reset';
+type AuthView = 'tabs' | 'forgot' | 'reset' | 'magic' | 'magic-verify';
 
 export function AuthPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<AuthView>('tabs');
   const [resetToken, setResetToken] = useState<string | null>(null);
 
-  // Check URL params for reset token
+  // Check URL params for reset token or magic link
   useEffect(() => {
     const action = searchParams.get('action');
     const token = searchParams.get('token');
     if (action === 'reset' && token) {
       setResetToken(token);
       setView('reset');
+    } else if (action === 'magic' && token) {
+      setResetToken(token);
+      setView('magic-verify');
     }
   }, [searchParams]);
 
@@ -480,6 +1076,14 @@ export function AuthPage() {
             <ResetPasswordForm token={resetToken} onSuccess={handleResetSuccess} />
           )}
 
+          {view === 'magic' && (
+            <MagicLinkForm onBack={handleBackToLogin} />
+          )}
+
+          {view === 'magic-verify' && resetToken && (
+            <MagicLinkVerify token={resetToken} onSuccess={handleBackToLogin} />
+          )}
+
           {view === 'tabs' && (
             <Tabs defaultValue="login">
               <TabsList className="w-full mb-6">
@@ -488,19 +1092,20 @@ export function AuthPage() {
               </TabsList>
 
               <TabsContent value="login">
-                <LoginForm onForgotPassword={() => setView('forgot')} />
+                <LoginTabContent onForgotPassword={() => setView('forgot')} onMagicLink={() => setView('magic')} />
               </TabsContent>
 
               <TabsContent value="register">
-                <RegisterForm />
+                <RegisterTabContent />
               </TabsContent>
             </Tabs>
           )}
         </div>
 
-        <p className="text-center text-xs text-slate-400 mt-6">
-          3Maps © {new Date().getFullYear()}
-        </p>
+        <div className="text-center text-xs text-slate-500 mt-6 space-y-0.5">
+          <p>3Maps © {new Date().getFullYear()}</p>
+          <p>v{APP_VERSION}</p>
+        </div>
       </div>
     </div>
   );

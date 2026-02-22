@@ -202,6 +202,57 @@ const MIGRATIONS = [
       `);
     },
   },
+  // Migration 0005 — Firebase Auth (firebase_uid on users)
+  {
+    version: 5,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN firebase_uid TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid) WHERE firebase_uid IS NOT NULL;
+      `);
+    },
+  },
+  // Migration 0006 — magic link tokens (login sem senha)
+  {
+    version: 6,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS magic_link_tokens (
+          id          TEXT PRIMARY KEY,
+          username    TEXT NOT NULL,
+          token_hash  TEXT NOT NULL UNIQUE,
+          expires_at  TEXT NOT NULL,
+          used        INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_mlt_token_hash ON magic_link_tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_mlt_username ON magic_link_tokens(username);
+      `);
+    },
+  },
+  // Migration 0007 — API tokens (acesso às APIs por token, gerado por admin)
+  {
+    version: 7,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS api_tokens (
+          id           TEXT PRIMARY KEY,
+          token_hash   TEXT NOT NULL UNIQUE,
+          token_prefix TEXT NOT NULL,
+          username     TEXT NOT NULL,
+          name         TEXT,
+          scopes       TEXT NOT NULL,
+          expires_at   TEXT,
+          last_used_at TEXT,
+          is_active    INTEGER NOT NULL DEFAULT 1,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          created_by   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_apit_token_hash ON api_tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_apit_username ON api_tokens(username);
+      `);
+    },
+  },
 ];
 
 function runMigrations(db) {

@@ -24,6 +24,7 @@ export function MapCard({ map }: MapCardProps) {
   const deleteMap = useMapsStore((s) => s.deleteMap);
   const template = TEMPLATES.find((t) => t.id === map.template);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const displayTitle = map.ownerPath ?? map.title;
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -39,7 +40,7 @@ export function MapCard({ map }: MapCardProps) {
     <>
       <div
         role="article"
-        aria-label={`Mapa mental: ${map.title}`}
+        aria-label={`Mapa mental: ${displayTitle}`}
         onClick={() => navigate(`/map/${map.id}`)}
         className="group relative flex flex-col bg-card border border-border rounded-xl overflow-hidden cursor-pointer hover:border-primary/50 hover:shadow-md transition-all"
       >
@@ -58,7 +59,7 @@ export function MapCard({ map }: MapCardProps) {
         {/* Content */}
         <div className="flex flex-col gap-2 p-3 flex-1">
           <h3 className="font-semibold text-sm leading-tight line-clamp-2 text-foreground">
-            {map.title}
+            {displayTitle}
           </h3>
 
           <p className="text-xs text-muted-foreground line-clamp-1">{map.query}</p>
@@ -94,7 +95,7 @@ export function MapCard({ map }: MapCardProps) {
           size="sm"
           onClick={handleDeleteClick}
           className="absolute top-2 right-2 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 hover:bg-destructive hover:text-destructive-foreground"
-          aria-label={`Excluir mapa "${map.title}"`}
+          aria-label={`Excluir mapa "${displayTitle}"`}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
@@ -110,7 +111,7 @@ export function MapCard({ map }: MapCardProps) {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
-            Tem certeza que deseja excluir <strong className="text-foreground">"{map.title}"</strong>?
+            Tem certeza que deseja excluir <strong className="text-foreground">"{displayTitle}"</strong>?
             Esta ação não pode ser desfeita.
           </p>
           <DialogFooter>

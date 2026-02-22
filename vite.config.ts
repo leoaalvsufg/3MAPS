@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -40,6 +43,22 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api/health': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/docs': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/llm': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/academic': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/image': {
         target: 'http://localhost:8787',
         changeOrigin: true,
       },

@@ -26,14 +26,14 @@ export function TagsPage() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Tag list */}
-        <div className="w-64 shrink-0 border-r border-border overflow-y-auto p-4 flex flex-col gap-2">
+      <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
+        {/* Tag list: horizontal em mobile, sidebar em desktop */}
+        <div className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-border overflow-x-auto md:overflow-y-auto overflow-y-hidden p-4 flex flex-row md:flex-col gap-2">
           {tags.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center gap-2">
+            <div className="flex flex-col items-center justify-center w-full md:w-auto min-h-[80px] md:min-h-0 text-center gap-2 shrink-0">
               <Tag className="h-8 w-8 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">Nenhuma tag ainda.</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground hidden md:block">
                 Tags são criadas ao gerar mapas ou adicionadas manualmente.
               </p>
             </div>
@@ -44,7 +44,7 @@ export function TagsPage() {
                 <button
                   key={tag}
                   onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-left transition-colors ${
+                  className={`flex items-center justify-between shrink-0 md:shrink px-3 py-2 rounded-lg text-left transition-colors ${
                     selectedTag === tag
                       ? 'bg-primary/10 border border-primary/30'
                       : 'hover:bg-muted border border-transparent'
@@ -59,7 +59,7 @@ export function TagsPage() {
         </div>
 
         {/* Maps for selected tag */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {!selectedTag ? (
             <div className="flex flex-col items-center justify-center h-full text-center gap-2">
               <Tag className="h-10 w-10 text-muted-foreground" />

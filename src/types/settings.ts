@@ -1,4 +1,4 @@
-export type LLMProvider = 'openrouter' | 'openai';
+export type LLMProvider = 'openrouter' | 'openai' | 'gemini';
 export type ThemeMode = 'light' | 'dark' | 'system';
 
 export interface LLMModel {
@@ -14,9 +14,12 @@ export interface SettingsState {
   username: string;
   openrouterApiKey: string;
   openaiApiKey: string;
+  geminiApiKey: string;
   replicateApiKey: string;
   provider: LLMProvider;
   selectedModel: string;
+  /** Lista de modelos habilitados para roteamento por provedor (inclui modelos manuais). */
+  providerModels: Record<LLMProvider, string[]>;
   theme: ThemeMode;
   generateImages: boolean;
   language: string;

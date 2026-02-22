@@ -31,6 +31,21 @@ import {
   setAdminSettings,
 } from './activity.js';
 
+const PLAN_RESOURCE_LIMITS = {
+  free: { mapsPerMonth: 5, maxMapsStored: 5, chatMessagesPerMap: 5 },
+  premium: { mapsPerMonth: -1, maxMapsStored: -1, chatMessagesPerMap: -1 },
+  enterprise: { mapsPerMonth: -1, maxMapsStored: -1, chatMessagesPerMap: -1 },
+  admin: { mapsPerMonth: -1, maxMapsStored: -1, chatMessagesPerMap: -1 },
+};
+
+function sumChatMessages(chatMessagesSent) {
+  if (!chatMessagesSent || typeof chatMessagesSent !== 'object') return 0;
+  return Object.values(chatMessagesSent).reduce((acc, value) => {
+    const n = Number(value ?? 0);
+    return acc + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
 // ---------------------------------------------------------------------------
 // Admin middleware helper
 // ---------------------------------------------------------------------------
@@ -222,12 +237,90 @@ export async function handleGetStats() {
     // ignore
   }
 
+  // LLM usage + per-account resource usage (maps/chat available vs used)
+  let llmUsage = {
+    estimatedRequestsThisMonth: 0,
+    mapsGenerationRequestsThisMonth: 0,
+    chatRequestsThisMonth: 0,
+    topAccounts: [],
+  };
+  let accountResourceUsage = [];
+  try {
+    const { users } = await listUsers({ limit: 10_000, offset: 0, search: '' });
+
+    const perAccount = [];
+    let mapsGenerationRequestsThisMonth = 0;
+    let chatRequestsThisMonth = 0;
+
+    for (const user of users) {
+      const effectivePlan = user.isAdmin ? 'admin' : (user.plan ?? 'free');
+      const limits = PLAN_RESOURCE_LIMITS[effectivePlan] ?? PLAN_RESOURCE_LIMITS.free;
+
+      const usage = await getUsage(user.username);
+      const mapsStored = await listMaps(user.username).then((m) => m.length).catch(() => 0);
+      const chatMessagesUsedThisMonth = sumChatMessages(usage.chatMessagesSent);
+      const mapsUsedThisMonth = usage.mapsCreatedThisMonth ?? 0;
+
+      mapsGenerationRequestsThisMonth += mapsUsedThisMonth;
+      chatRequestsThisMonth += chatMessagesUsedThisMonth;
+
+      const estimatedLlmRequests = (mapsUsedThisMonth * 3) + chatMessagesUsedThisMonth;
+      perAccount.push({
+        username: user.username,
+        plan: effectivePlan,
+        isAdmin: user.isAdmin === true,
+        resources: {
+          mapsPerMonth: {
+            used: mapsUsedThisMonth,
+            limit: limits.mapsPerMonth,
+            remaining: limits.mapsPerMonth === -1 ? -1 : Math.max(0, limits.mapsPerMonth - mapsUsedThisMonth),
+          },
+          mapsStored: {
+            used: mapsStored,
+            limit: limits.maxMapsStored,
+            remaining: limits.maxMapsStored === -1 ? -1 : Math.max(0, limits.maxMapsStored - mapsStored),
+          },
+          chatMessagesThisMonth: {
+            used: chatMessagesUsedThisMonth,
+            perMapLimit: limits.chatMessagesPerMap,
+          },
+          estimatedLlmRequestsThisMonth: estimatedLlmRequests,
+        },
+      });
+    }
+
+    const estimatedRequestsThisMonth = (mapsGenerationRequestsThisMonth * 3) + chatRequestsThisMonth;
+    llmUsage = {
+      estimatedRequestsThisMonth,
+      mapsGenerationRequestsThisMonth,
+      chatRequestsThisMonth,
+      topAccounts: perAccount
+        .slice()
+        .sort((a, b) => b.resources.estimatedLlmRequestsThisMonth - a.resources.estimatedLlmRequestsThisMonth)
+        .slice(0, 10)
+        .map((a) => ({
+          username: a.username,
+          plan: a.plan,
+          estimatedLlmRequestsThisMonth: a.resources.estimatedLlmRequestsThisMonth,
+          mapsUsedThisMonth: a.resources.mapsPerMonth.used,
+          chatMessagesUsedThisMonth: a.resources.chatMessagesThisMonth.used,
+        })),
+    };
+    accountResourceUsage = perAccount
+      .slice()
+      .sort((a, b) => a.username.localeCompare(b.username, 'pt-BR'));
+  } catch {
+    // ignore
+  }
+
   return {
     ...stats,
     totalMapFiles,
     usersByPlan,
     recentRegistrations,
     recentActivity,
+    llmUsage,
+    accountResourceUsage,
     serverTime: new Date().toISOString(),
   };
 }
@@ -295,6 +388,12 @@ export async function handleGetSettings() {
   if (masked.stripe_secret_key && typeof masked.stripe_secret_key === 'string') {
     masked.stripe_secret_key = masked.stripe_secret_key.replace(/^(sk_(?:test|live)_[A-Za-z0-9]{4}).*/, '$1****');
   }
+  // Mask LLM / Replicate keys
+  for (const k of ['openrouter_api_key', 'openai_api_key', 'gemini_api_key', 'replicate_api_key']) {
+    if (masked[k] && typeof masked[k] === 'string' && masked[k].length > 8) {
+      masked[k] = masked[k].slice(0, 4) + '****' + masked[k].slice(-4);
+    }
+  }
   return masked;
 }
 
@@ -309,6 +408,12 @@ export async function handleUpdateSettings(body, adminUsername) {
 
   // Allowed setting keys
   const allowedKeys = [
+    'openrouter_api_key',
+    'openai_api_key',
+    'gemini_api_key',
+    'replicate_api_key',
+    'llm_default_provider',
+    'llm_default_model',
     'stripe_publishable_key',
     'stripe_secret_key',
     'stripe_webhook_secret',

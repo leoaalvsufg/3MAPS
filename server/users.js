@@ -110,6 +110,81 @@ export async function createUser(username, password, options = {}) {
   return { userId, username };
 }
 
+/** Placeholder password_hash for Firebase-only users (never used for login). */
+const FIREBASE_PASSWORD_PLACEHOLDER = 'firebase';
+
+/**
+ * Derive a unique username from Firebase email (for new accounts).
+ * @param {string} email
+ * @returns {Promise<string>}
+ */
+async function uniqueUsernameFromEmail(email) {
+  const local = (email || '').split('@')[0] || 'user';
+  const base = local.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30) || 'user';
+  if (base.length < 3) {
+    return uniqueUsernameFromBase('user');
+  }
+  return uniqueUsernameFromBase(base);
+}
+
+async function uniqueUsernameFromBase(base) {
+  let username = base.slice(0, 30);
+  let n = 0;
+  while (await getUser(username)) {
+    n += 1;
+    const suffix = `_${n}`;
+    username = (base.slice(0, 30 - suffix.length) + suffix).slice(0, 30);
+  }
+  return username;
+}
+
+/**
+ * Get user profile by Firebase UID.
+ * @param {string} firebaseUid
+ * @returns {Promise<UserProfile | null>}
+ */
+export async function getUserByFirebaseUid(firebaseUid) {
+  if (!firebaseUid || typeof firebaseUid !== 'string') return null;
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM users WHERE firebase_uid = ?').get(firebaseUid);
+  if (!row) return null;
+  return rowToProfile(row);
+}
+
+/**
+ * Create or get user from Firebase Auth (email/Google). Links by firebase_uid or creates new.
+ * @param {{ uid: string, email?: string | null, displayName?: string | null }} firebaseUser
+ * @returns {Promise<{ userId: string, username: string }>}
+ */
+export async function getOrCreateUserFromFirebase(firebaseUser) {
+  const { uid, email, displayName } = firebaseUser;
+  if (!uid) throw new Error('Firebase UID is required');
+
+  const existing = await getUserByFirebaseUid(uid);
+  if (existing) {
+    return { userId: existing.userId, username: existing.username };
+  }
+
+  const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : null;
+  if (normalizedEmail) {
+    const db = getDb();
+    const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
+    if (byEmail) {
+      db.prepare('UPDATE users SET firebase_uid = ?, updated_at = datetime(\'now\') WHERE id = ?').run(uid, byEmail.id);
+      return { userId: byEmail.id, username: byEmail.username };
+    }
+  }
+
+  const username = await uniqueUsernameFromEmail(normalizedEmail || displayName || uid);
+  const userId = crypto.randomUUID();
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid);
+  return { userId, username };
+}
+
 /**
  * Read a user profile by username.
  * @param {string} username
@@ -124,6 +199,20 @@ export async function getUser(username) {
 
   const db = getDb();
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!row) return null;
+  return rowToProfile(row);
+}
+
+/**
+ * Read a user profile by email (case-insensitive).
+ * @param {string} email
+ * @returns {Promise<UserProfile | null>}
+ */
+export async function getUserByEmail(email) {
+  if (!email || typeof email !== 'string') return null;
+  const db = getDb();
+  const normalized = email.trim().toLowerCase();
+  const row = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = ? AND is_active = 1').get(normalized);
   if (!row) return null;
   return rowToProfile(row);
 }
@@ -232,15 +321,22 @@ export async function listUsers(options = {}) {
 }
 
 /**
- * Validate username + password and return the user identity if correct.
- * @param {string} username
+ * Validate login (username or email) + password and return the user identity if correct.
+ * @param {string} login — username or email
  * @param {string} password
  * @returns {Promise<{ userId: string, username: string, isAdmin: boolean } | null>}
  */
-export async function validateCredentials(username, password) {
-  const profile = await getUser(username);
+export async function validateCredentials(login, password) {
+  const trimmed = (login || '').trim();
+  if (!trimmed) return null;
+  const isEmail = trimmed.includes('@');
+  const profile = isEmail
+    ? await getUserByEmail(trimmed)
+    : await getUser(trimmed);
   if (!profile) return null;
   if (!profile.isActive) return null;
+  // Firebase-only users have placeholder hash; do not allow password login
+  if (profile.passwordHash === FIREBASE_PASSWORD_PLACEHOLDER) return null;
   const ok = await verifyPassword(password, profile.passwordHash);
   if (!ok) return null;
   return { userId: profile.userId, username: profile.username, isAdmin: profile.isAdmin };

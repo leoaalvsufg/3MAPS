@@ -1,8 +1,9 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { HomePage } from '@/pages/HomePage';
 import { OnboardingProvider } from '@/components/onboarding/OnboardingProvider';
+import { useAuthStore } from '@/stores/auth-store';
 
 // Route-level code splitting — keep HomePage eager (landing page)
 const MapPage = lazy(() => import('@/pages/MapPage').then((m) => ({ default: m.MapPage })));
@@ -11,6 +12,7 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ de
 const TagsPage = lazy(() => import('@/pages/TagsPage').then((m) => ({ default: m.TagsPage })));
 const AuthPage = lazy(() => import('@/pages/AuthPage').then((m) => ({ default: m.AuthPage })));
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+const ReleaseNotesPage = lazy(() => import('@/pages/ReleaseNotesPage').then((m) => ({ default: m.ReleaseNotesPage })));
 
 function PageLoader() {
   return (
@@ -21,6 +23,12 @@ function PageLoader() {
       </div>
     </div>
   );
+}
+
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  if (!isAuthenticated) return <Navigate to="/auth" replace />;
+  return children;
 }
 
 function App() {
@@ -43,13 +51,21 @@ function App() {
           path="/admin"
           element={
             <Suspense fallback={<PageLoader />}>
-              <AdminPage />
+              <RequireAuth>
+                <AdminPage />
+              </RequireAuth>
             </Suspense>
           }
         />
 
         {/* Main app routes — wrapped in AppShell */}
-        <Route element={<AppShell />}>
+        <Route
+          element={(
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          )}
+        >
           <Route path="/" element={<HomePage />} />
           <Route
             path="/map/:id"
@@ -80,6 +96,14 @@ function App() {
             element={
               <Suspense fallback={<PageLoader />}>
                 <SettingsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/release-notes"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ReleaseNotesPage />
               </Suspense>
             }
           />

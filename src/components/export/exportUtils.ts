@@ -1,13 +1,103 @@
 import type { SavedMap } from '@/types/mindmap';
 import type MindElixir from 'mind-elixir';
+import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from '@xyflow/react';
 
 export type ExportFormat = 'png' | 'svg' | 'pdf' | 'markdown';
 
+const IMAGE_WIDTH = 4096;
+const IMAGE_HEIGHT = 3072;
+
 /**
- * Export any HTMLElement as PNG using html2canvas.
- * Useful for ReactFlow-based mindmaps.
+ * Capture the full ReactFlow diagram (nodes + edges) via html-to-image.
+ * Falls back to html2canvas if viewport element is not available.
  */
-export async function exportElementAsPng(element: HTMLElement, filename: string): Promise<void> {
+async function captureReactFlowViewport(
+  viewportEl: HTMLElement | null,
+  flowInstance: ReactFlowInstance | null,
+  fallbackEl: HTMLElement,
+  scale: number,
+): Promise<string> {
+  if (viewportEl && flowInstance) {
+    const { toPng } = await import('html-to-image');
+    const nodes = flowInstance.getNodes();
+    if (nodes.length > 0) {
+      const bounds = getNodesBounds(nodes);
+      const padding = 80;
+      const padded = {
+        x: bounds.x - padding,
+        y: bounds.y - padding,
+        width: bounds.width + padding * 2,
+        height: bounds.height + padding * 2,
+      };
+      const viewport = getViewportForBounds(padded, IMAGE_WIDTH, IMAGE_HEIGHT, 0.5, 2, 0);
+
+      return await toPng(viewportEl, {
+        backgroundColor: '#ffffff',
+        width: IMAGE_WIDTH,
+        height: IMAGE_HEIGHT,
+        style: {
+          width: `${IMAGE_WIDTH}px`,
+          height: `${IMAGE_HEIGHT}px`,
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+        },
+        pixelRatio: scale,
+      });
+    }
+  }
+
+  const { default: html2canvas } = await import('html2canvas');
+  const canvas = await html2canvas(fallbackEl, {
+    backgroundColor: '#ffffff',
+    scale,
+    useCORS: true,
+    logging: false,
+  });
+  return canvas.toDataURL('image/png');
+}
+
+/**
+ * Export ReactFlow mindmap as PNG (full diagram with edges).
+ */
+export async function exportElementAsPng(
+  element: HTMLElement,
+  filename: string,
+  viewportEl?: HTMLElement | null,
+  flowInstance?: ReactFlowInstance | null,
+): Promise<void> {
+  if (viewportEl && flowInstance) {
+    const { toPng } = await import('html-to-image');
+    const nodes = flowInstance.getNodes();
+    if (nodes.length > 0) {
+      const bounds = getNodesBounds(nodes);
+      const padding = 80;
+      const padded = {
+        x: bounds.x - padding,
+        y: bounds.y - padding,
+        width: bounds.width + padding * 2,
+        height: bounds.height + padding * 2,
+      };
+      const viewport = getViewportForBounds(padded, IMAGE_WIDTH, IMAGE_HEIGHT, 0.5, 2, 0);
+
+      const dataUrl = await toPng(viewportEl, {
+        backgroundColor: '#ffffff',
+        width: IMAGE_WIDTH,
+        height: IMAGE_HEIGHT,
+        style: {
+          width: `${IMAGE_WIDTH}px`,
+          height: `${IMAGE_HEIGHT}px`,
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+        },
+        pixelRatio: 2,
+      });
+
+      const link = document.createElement('a');
+      link.download = `${filename}.png`;
+      link.href = dataUrl;
+      link.click();
+      return;
+    }
+  }
+
   const { default: html2canvas } = await import('html2canvas');
   const canvas = await html2canvas(element, {
     backgroundColor: '#ffffff',
@@ -15,34 +105,35 @@ export async function exportElementAsPng(element: HTMLElement, filename: string)
     useCORS: true,
     logging: false,
   });
-
   canvas.toBlob((blob) => {
     if (blob) downloadBlob(blob, `${filename}.png`);
   }, 'image/png');
 }
 
 /**
- * Export any HTMLElement as PDF using html2canvas + jsPDF.
+ * Export ReactFlow mindmap as PDF (full diagram with edges).
  */
-export async function exportElementAsPdf(element: HTMLElement, map: SavedMap): Promise<void> {
+export async function exportElementAsPdf(
+  element: HTMLElement,
+  map: SavedMap,
+  viewportEl?: HTMLElement | null,
+  flowInstance?: ReactFlowInstance | null,
+): Promise<void> {
+  const imgData = await captureReactFlowViewport(viewportEl, flowInstance, element, 1.5);
+
   const { default: jsPDF } = await import('jspdf');
-  const { default: html2canvas } = await import('html2canvas');
-
-  const canvas = await html2canvas(element, {
-    backgroundColor: '#ffffff',
-    scale: 1.5,
-    useCORS: true,
-    logging: false,
+  const img = new Image();
+  await new Promise<void>((resolve) => {
+    img.onload = () => resolve();
+    img.src = imgData;
   });
 
-  const imgData = canvas.toDataURL('image/png');
   const pdf = new jsPDF({
-    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+    orientation: img.width > img.height ? 'landscape' : 'portrait',
     unit: 'px',
-    format: [canvas.width, canvas.height],
+    format: [img.width, img.height],
   });
-
-  pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+  pdf.addImage(imgData, 'PNG', 0, 0, img.width, img.height);
   pdf.save(`${slugify(map.title)}.pdf`);
 }
 

@@ -1,4 +1,5 @@
-import { Minimize2, Maximize2, Languages, RefreshCw, Download, MessageSquare, Layers, BookOpen } from 'lucide-react';
+import { useState } from 'react';
+import { Minimize2, Maximize2, Languages, RefreshCw, Download, MessageSquare, Layers, BookOpen, LayoutGrid, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -20,6 +21,7 @@ interface PostGenActionsProps {
   onDetailed: () => void;
   onTranslate: () => void;
   onRegenerate: () => void;
+  onReorganize?: () => void;
   onExport: () => void;
   onChat: () => void;
   graphType: GraphType;
@@ -35,6 +37,7 @@ export function PostGenActions({
   onDetailed,
   onTranslate,
   onRegenerate,
+  onReorganize,
   onExport,
   onChat,
   graphType,
@@ -54,9 +57,10 @@ export function PostGenActions({
 
   const graphTypeLabel = GRAPH_TYPES.find((t) => t.id === graphType)?.label ?? graphType;
 	const isDetailedProcessing = Boolean(isLoading && activeAction === 'detalhado');
+	const [mobileExpanded, setMobileExpanded] = useState(false);
 
-  return (
-    <div className="flex flex-wrap items-center gap-2 p-3 bg-card border border-border rounded-xl shadow-sm">
+  const actionsContent = (
+    <>
       <span className="text-xs font-medium text-muted-foreground mr-1 hidden sm:block">Ações:</span>
 
       {/* Graph type selector */}
@@ -155,6 +159,19 @@ export function PostGenActions({
         Regenerar
       </Button>
 
+      {onReorganize && graphType === 'mindmap' && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onReorganize}
+          className="gap-1.5 text-xs h-8"
+          title="Reorganizar layout do mapa automaticamente"
+        >
+          <LayoutGrid className="h-3.5 w-3.5" />
+          Reorganizar
+        </Button>
+      )}
+
       <div className="flex-1" />
 
       <Button
@@ -177,6 +194,30 @@ export function PostGenActions({
         <Download className="h-3.5 w-3.5" />
         Exportar
       </Button>
+    </>
+  );
+
+	return (
+    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-3 bg-card border border-border rounded-xl shadow-sm">
+			{/* Mobile: botão toggle para abrir/fechar */}
+			<div className="flex items-center justify-between sm:hidden">
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => setMobileExpanded(!mobileExpanded)}
+					className="gap-1.5 text-xs h-8"
+					title={mobileExpanded ? 'Fechar menu de ações' : 'Abrir menu de ações'}
+					aria-expanded={mobileExpanded}
+				>
+					{mobileExpanded ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+					{mobileExpanded ? 'Fechar' : 'Ações'}
+				</Button>
+			</div>
+
+			{/* Desktop: sempre visível | Mobile: visível quando expandido */}
+			<div className={`flex flex-wrap items-center gap-2 w-full ${mobileExpanded ? 'flex' : 'hidden'} sm:flex`}>
+				{actionsContent}
+			</div>
 
 			{isDetailedProcessing && (
 				<div className="w-full pt-2">

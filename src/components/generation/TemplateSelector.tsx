@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils';
 import { TEMPLATES } from '@/lib/constants';
 import { PLANS } from '@/lib/plans';
 import { useUsageStore } from '@/stores/usage-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { Lock } from 'lucide-react';
 import type { TemplateId } from '@/types/templates';
 
@@ -22,12 +23,16 @@ const colorMap: Record<string, string> = {
   orange: 'border-orange-200 bg-orange-50 hover:bg-orange-100 data-[selected=true]:border-orange-500 data-[selected=true]:bg-orange-100',
   indigo: 'border-indigo-200 bg-indigo-50 hover:bg-indigo-100 data-[selected=true]:border-indigo-500 data-[selected=true]:bg-indigo-100',
 	slate: 'border-slate-200 bg-slate-50 hover:bg-slate-100 data-[selected=true]:border-slate-600 data-[selected=true]:bg-slate-100',
+	emerald: 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100 data-[selected=true]:border-emerald-500 data-[selected=true]:bg-emerald-100',
 };
 
 export function TemplateSelector({ selected, onSelect, onLockedSelect }: TemplateSelectorProps) {
   const limits = useUsageStore((s) => s.limits);
-  // Use server-fetched limits if available, else fall back to free plan
-  const allowedTemplates = limits?.templatesAllowed ?? PLANS.free.templatesAllowed;
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
+  // Admin is always enterprise+ on UI, even before usage payload arrives.
+  const allowedTemplates = isAdmin
+    ? PLANS.admin.templatesAllowed
+    : (limits?.templatesAllowed ?? PLANS.free.templatesAllowed);
 
   return (
     <div className="w-full">

@@ -39,6 +39,7 @@ const ALL_TEMPLATES = [
   'comparacao',
   'timeline',
   'pensamento_profundo',
+  'pesquisador_senior',
 ];
 
 /** All available export formats */
@@ -49,12 +50,12 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     id: 'free',
     name: 'Gratuito',
     mapsPerMonth: 5,
-    templatesAllowed: ['padrao', 'brainstorm', 'analise'],
+    templatesAllowed: ['padrao', 'brainstorm', 'analise', 'pesquisador_senior'],
     exportFormats: ['png'],
     imageGeneration: false,
     chatEnabled: true,
     chatMessagesPerMap: 5,
-    maxMapsStored: 20,
+    maxMapsStored: 5,
     canConfigureApiKeys: false,
   },
   premium: {

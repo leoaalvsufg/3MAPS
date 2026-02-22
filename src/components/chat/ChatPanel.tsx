@@ -8,7 +8,8 @@ import { UpgradePrompt } from '@/components/monetization/UpgradePrompt';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUsageStore } from '@/stores/usage-store';
-import { callLLMStream } from '@/services/llm/client';
+import { useAuthStore } from '@/stores/auth-store';
+import { callRoutedLLMStream } from '@/services/llm/routedClient';
 import { getChatSystemPrompt, getSuggestionsPrompt } from '@/services/llm/prompts';
 import { parseJSON } from '@/services/llm/client';
 import type { SavedMap } from '@/types/mindmap';
@@ -35,6 +36,7 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   const setLoading = useChatStore((s) => s.setLoading);
   const settings = useSettingsStore();
   const checkAction = useUsageStore((s) => s.checkAction);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
 
   const messages = session?.messages ?? [];
 
@@ -49,13 +51,13 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   }, []);
 
   const loadSuggestions = async () => {
-    if (!settings.hasApiKey() || !map.analysis) return;
+    if (!settings.hasAnyApiKey() || !map.analysis) return;
     setLoadingSuggestions(true);
     try {
       const prompt = getSuggestionsPrompt(map.title, map.analysis.subtopics);
-      const result = await callLLMStream(
+      const result = await callRoutedLLMStream(
+        'suggestions',
         [{ role: 'user', content: prompt }],
-        { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel },
         () => {}
       );
       const parsed = parseJSON<string[]>(result);
@@ -72,17 +74,19 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   };
 
   const sendMessage = async (content: string) => {
-    if (!content.trim() || isLoading || !settings.hasApiKey()) return;
+    if (!content.trim() || isLoading || !settings.hasAnyApiKey()) return;
 
     // Check chat message limit before sending
-    try {
-      const check = await checkAction('chat_message', { mapId: map.id });
-      if (!check.allowed) {
-        setChatLimitReached(true);
-        return;
+    if (!isAdmin) {
+      try {
+        const check = await checkAction('chat_message', { mapId: map.id });
+        if (!check.allowed) {
+          setChatLimitReached(true);
+          return;
+        }
+      } catch {
+        // Fail open
       }
-    } catch {
-      // Fail open
     }
 
     setInput('');
@@ -110,9 +114,9 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
       }));
 
       let accumulated = '';
-      await callLLMStream(
+      await callRoutedLLMStream(
+        'chat',
         [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content }],
-        { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel },
         (chunk) => {
           accumulated += chunk;
           updateMessage(map.id, assistantId, { content: accumulated });

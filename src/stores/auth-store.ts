@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { loginUser, registerUser, getCurrentUser } from '@/services/api/authApi';
+import { loginUser, registerUser, getCurrentUser, firebaseLogin, verifyMagicLink } from '@/services/api/authApi';
 import type { AuthUser } from '@/services/api/authApi';
 
 interface AuthState {
@@ -12,6 +12,8 @@ interface AuthState {
 interface AuthActions {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
+  loginWithFirebase: (idToken: string) => Promise<void>;
+  loginWithMagicLink: (token: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
 }
@@ -69,6 +71,52 @@ export const useAuthStore = create<AuthStore>()(
           // ignore
         }
         // Load all maps from server after registration
+        try {
+          const { useMapsStore } = await import('@/stores/maps-store');
+          void useMapsStore.getState().loadAllMapsFromServer();
+        } catch {
+          // ignore
+        }
+      },
+
+      loginWithFirebase: async (idToken) => {
+        const { token, user } = await firebaseLogin(idToken);
+        set({ token, user, isAuthenticated: true });
+        try {
+          const { useSettingsStore } = await import('@/stores/settings-store');
+          useSettingsStore.getState().setUsername(user.username);
+        } catch {
+          // ignore
+        }
+        try {
+          const { useUsageStore } = await import('@/stores/usage-store');
+          void useUsageStore.getState().fetchUsage();
+        } catch {
+          // ignore
+        }
+        try {
+          const { useMapsStore } = await import('@/stores/maps-store');
+          void useMapsStore.getState().loadAllMapsFromServer();
+        } catch {
+          // ignore
+        }
+      },
+
+      loginWithMagicLink: async (magicToken) => {
+        const { token, user } = await verifyMagicLink(magicToken);
+        set({ token, user, isAuthenticated: true });
+        try {
+          const { useSettingsStore } = await import('@/stores/settings-store');
+          useSettingsStore.getState().setUsername(user.username);
+        } catch {
+          // ignore
+        }
+        try {
+          const { useUsageStore } = await import('@/stores/usage-store');
+          void useUsageStore.getState().fetchUsage();
+        } catch {
+          // ignore
+        }
         try {
           const { useMapsStore } = await import('@/stores/maps-store');
           void useMapsStore.getState().loadAllMapsFromServer();
