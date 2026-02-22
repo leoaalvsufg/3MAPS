@@ -9,6 +9,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { callLLMStream } from '@/services/llm/client';
+import { getRouteOptions } from '@/services/llm/routeLLM';
 import { getChatSystemPrompt, getSuggestionsPrompt } from '@/services/llm/prompts';
 import { parseJSON } from '@/services/llm/client';
 import type { SavedMap } from '@/types/mindmap';
@@ -52,10 +53,12 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
     if (!settings.hasApiKey() || !map.analysis) return;
     setLoadingSuggestions(true);
     try {
+      const opts = await getRouteOptions('suggestions');
+      if (!opts) return;
       const prompt = getSuggestionsPrompt(map.title, map.analysis.subtopics);
       const result = await callLLMStream(
         [{ role: 'user', content: prompt }],
-        { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel },
+        opts,
         () => {}
       );
       const parsed = parseJSON<string[]>(result);
@@ -109,10 +112,12 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
         content: m.content,
       }));
 
+      const chatOpts = await getRouteOptions('chat');
+      if (!chatOpts) return;
       let accumulated = '';
       await callLLMStream(
         [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content }],
-        { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel },
+        chatOpts,
         (chunk) => {
           accumulated += chunk;
           updateMessage(map.id, assistantId, { content: accumulated });

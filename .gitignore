@@ -36,3 +36,7 @@ screenshots/
 
 # Backup zips
 *.zip
+
+# Firebase service account key (never commit)
+server/firebase-service-account.json
+maps-dc9df-firebase-adminsdk-fbsvc-0767bf295a.json

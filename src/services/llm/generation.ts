@@ -9,9 +9,11 @@ import type {
 } from '@/types/mindmap';
 import type { TemplateId } from '@/types/templates';
 import { callLLM, parseJSON } from './client';
+import { getRouteOptions } from './routeLLM';
 import {
   getAnalysisPrompt,
 	getDeepThoughtPreflightPrompt,
+  getQueryRefinementPrompt,
   getMindMapPrompt,
   getArticlePrompt,
 } from './prompts';
@@ -83,12 +85,6 @@ export async function generateMindMap(
     // Fail open — don't block generation if usage check fails
   }
 
-  const llmOptions = {
-    provider: settings.provider,
-    apiKey: await settings.getActiveApiKey(),
-    model: settings.selectedModel,
-  };
-
   try {
 		let effectiveQuery = query;
 		let graphType: GraphType = 'mindmap';
@@ -101,9 +97,14 @@ export async function generateMindMap(
 			onProgress(5, 'Pensamento profundo: levantando fontes e contexto...');
 			mapsStore.setGenerationStatus('analyzing');
 
+			const preflightOpts = await getRouteOptions('preflight');
+			if (!preflightOpts) {
+				onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
+				return;
+			}
 			const preflightText = await callLLM(
 				[{ role: 'user', content: getDeepThoughtPreflightPrompt(query) }],
-				{ ...llmOptions, temperature: 0.2, maxTokens: 2200 }
+				{ ...preflightOpts, temperature: 0.2, maxTokens: 2200 }
 			);
 
 			const preflight = parseJSON<DeepThoughtPreflightResult>(preflightText);
@@ -152,31 +153,56 @@ export async function generateMindMap(
 				null,
 				2
 			);
+
+			// Reanálise: refinar a pergunta antes da análise para melhor qualidade
+			onProgress(8, 'Refinando pergunta para análise...');
+			const refineOpts = await getRouteOptions('preflight');
+			if (refineOpts) {
+				try {
+					const refinedText = await callLLM(
+						[{ role: 'user', content: getQueryRefinementPrompt(effectiveQuery, extraContext) }],
+						{ ...refineOpts, temperature: 0.2, maxTokens: 500 }
+					);
+					const trimmed = refinedText.trim();
+					if (trimmed.length > 0) effectiveQuery = trimmed;
+				} catch {
+					// Se falhar o refinamento, segue com effectiveQuery atual
+				}
+			}
 		}
 
     // Stage 1: Analysis
     onProgress(10, 'Analisando conteúdo...');
     mapsStore.setGenerationStatus('analyzing');
 
+    const analysisOpts = await getRouteOptions('analysis');
+    if (!analysisOpts) {
+      onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
+      return;
+    }
     const analysisText = await callLLM(
 			[{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
-      { ...llmOptions, temperature: 0.3 }
+      { ...analysisOpts, temperature: 0.3 }
     );
 
     const analysis = parseJSON<AnalysisResult>(analysisText);
     onProgress(30, 'Análise concluída. Gerando mapa mental...');
 
-    // Stage 2 & 3: Mind map + Article (parallel)
+    // Stage 2 & 3: Mind map + Article (parallel) — cada um pode usar rota própria (custo/benefício)
     mapsStore.setGenerationStatus('generating');
+
+    const [mindmapOpts, articleOpts] = await Promise.all([getRouteOptions('mindmap'), getRouteOptions('article')]);
+    const mindmapOptions = mindmapOpts ?? analysisOpts;
+    const articleOptions = articleOpts ?? analysisOpts;
 
     const [mindMapText, articleText] = await Promise.all([
       callLLM(
         [{ role: 'user', content: getMindMapPrompt(analysis) }],
-        { ...llmOptions, temperature: 0.4, maxTokens: 8000 }
+        { ...mindmapOptions, temperature: 0.4, maxTokens: 8000 }
       ),
       callLLM(
         [{ role: 'user', content: getArticlePrompt(analysis) }],
-        { ...llmOptions, temperature: 0.7, maxTokens: 4000 }
+        { ...articleOptions, temperature: 0.7, maxTokens: 4000 }
       ),
     ]);
 

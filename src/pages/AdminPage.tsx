@@ -27,7 +27,6 @@ import {
   type AdminUser,
   type AdminStats,
   type ListUsersResponse,
-  type ActivityLog,
   type ListLogsResponse,
   type AdminNotification,
   type AdminSettings,

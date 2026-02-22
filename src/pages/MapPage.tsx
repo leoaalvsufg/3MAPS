@@ -16,6 +16,7 @@ const ExportDialog = lazy(() =>
 import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { callLLM, parseJSON } from '@/services/llm/client';
+import { getRouteOptions } from '@/services/llm/routeLLM';
 		import { getNodeByNodeDetailedRefinementPrompt, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
@@ -142,12 +143,12 @@ export function MapPage() {
 					nodes: nodesForRefinement,
 				});
 
+				const refineOpts = await getRouteOptions('refine_detailed');
+				if (!refineOpts) return;
 				const result = await callLLM(
 					[{ role: 'user', content: prompt }],
 					{
-						provider: settings.provider,
-						apiKey: await settings.getActiveApiKey(),
-						model: settings.selectedModel,
+						...refineOpts,
 						maxTokens: 4200,
 						temperature: 0.35,
 					}
@@ -172,9 +173,11 @@ export function MapPage() {
 			}
 
 	    const prompt = getPostGenPrompt(action, map.analysis);
+	    const postgenOpts = await getRouteOptions('postgen');
+	    if (!postgenOpts) return;
 	    const result = await callLLM(
 	      [{ role: 'user', content: prompt }],
-	      { provider: settings.provider, apiKey: await settings.getActiveApiKey(), model: settings.selectedModel, maxTokens: 6000 }
+	      { ...postgenOpts, maxTokens: 6000 }
 	    );
 	    const newData = normalizeMindElixirData(parseJSON<MindElixirData>(result));
 	    updateMap(map.id, { mindElixirData: newData });

@@ -202,6 +202,16 @@ const MIGRATIONS = [
       `);
     },
   },
+  // Migration 0005 — Firebase Auth (firebase_uid on users)
+  {
+    version: 5,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN firebase_uid TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid) WHERE firebase_uid IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 function runMigrations(db) {

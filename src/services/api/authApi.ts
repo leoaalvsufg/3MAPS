@@ -42,6 +42,17 @@ export async function loginUser(username: string, password: string): Promise<Aut
   });
 }
 
+/**
+ * Exchange Firebase ID token for app JWT (after sign-in with Firebase Auth).
+ */
+export async function firebaseLogin(idToken: string): Promise<AuthResponse> {
+  return authFetch<AuthResponse>('/api/auth/firebase', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+}
+
 export async function registerUser(username: string, password: string): Promise<AuthResponse> {
   return authFetch<AuthResponse>('/api/auth/register', {
     method: 'POST',

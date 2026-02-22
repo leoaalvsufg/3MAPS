@@ -110,6 +110,102 @@ export async function createUser(username, password, options = {}) {
   return { userId, username };
 }
 
+/** Placeholder password_hash for Firebase-only users (never used for login). */
+const FIREBASE_PASSWORD_PLACEHOLDER = 'firebase';
+
+/**
+ * Derive a unique username from Firebase email (for new accounts).
+ * @param {string} email
+ * @returns {Promise<string>}
+ */
+async function uniqueUsernameFromEmail(email) {
+  const local = (email || '').split('@')[0] || 'user';
+  const base = local.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30) || 'user';
+  if (base.length < 3) {
+    return uniqueUsernameFromBase('user');
+  }
+  return uniqueUsernameFromBase(base);
+}
+
+async function uniqueUsernameFromBase(base) {
+  let username = base.slice(0, 30);
+  let n = 0;
+  while (await getUser(username)) {
+    n += 1;
+    const suffix = `_${n}`;
+    username = (base.slice(0, 30 - suffix.length) + suffix).slice(0, 30);
+  }
+  return username;
+}
+
+/**
+ * Get user profile by Firebase UID.
+ * @param {string} firebaseUid
+ * @returns {Promise<UserProfile | null>}
+ */
+export async function getUserByFirebaseUid(firebaseUid) {
+  if (!firebaseUid || typeof firebaseUid !== 'string') return null;
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM users WHERE firebase_uid = ?').get(firebaseUid);
+  if (!row) return null;
+  return rowToProfile(row);
+}
+
+/**
+ * Create or get user from Firebase Auth (email/Google). Links by firebase_uid or creates new.
+ * @param {{ uid: string, email?: string | null, displayName?: string | null }} firebaseUser
+ * @returns {Promise<{ userId: string, username: string }>}
+ */
+export async function getOrCreateUserFromFirebase(firebaseUser) {
+  const { uid, email, displayName } = firebaseUser;
+  if (!uid) throw new Error('Firebase UID is required');
+
+  // 1. Try to find by Firebase UID (already linked)
+  const existing = await getUserByFirebaseUid(uid);
+  if (existing) {
+    return { userId: existing.userId, username: existing.username };
+  }
+
+  const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : null;
+
+  // 2. Try to find by email
+  if (normalizedEmail) {
+    const db = getDb();
+    const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
+    if (byEmail) {
+      db.prepare('UPDATE users SET firebase_uid = ?, updated_at = datetime(\'now\') WHERE id = ?').run(uid, byEmail.id);
+      return { userId: byEmail.id, username: byEmail.username };
+    }
+  }
+
+  // 3. Fallback: try to find by username derived from email (handles accounts
+  //    created without an email that match the Firebase email's local part)
+  if (normalizedEmail) {
+    const local = normalizedEmail.split('@')[0] || '';
+    const candidateUsername = local.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+    if (candidateUsername.length >= 3) {
+      const byUsername = await getUser(candidateUsername);
+      if (byUsername && !byUsername.email) {
+        // Link Firebase UID and set email on the existing account
+        const db = getDb();
+        db.prepare('UPDATE users SET firebase_uid = ?, email = ?, updated_at = datetime(\'now\') WHERE id = ?')
+          .run(uid, normalizedEmail, byUsername.userId);
+        return { userId: byUsername.userId, username: byUsername.username };
+      }
+    }
+  }
+
+  // 4. No existing account found — create a new one
+  const username = await uniqueUsernameFromEmail(normalizedEmail || displayName || uid);
+  const userId = crypto.randomUUID();
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid);
+  return { userId, username };
+}
+
 /**
  * Read a user profile by username.
  * @param {string} username

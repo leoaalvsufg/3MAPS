@@ -97,6 +97,13 @@ export const OPENAI_MODELS = [
   { id: 'gpt-4o', name: 'GPT-4o', description: 'Alta qualidade' },
 ];
 
+export const GEMINI_MODELS = [
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Rápido e eficiente' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Equilibrado' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Alta qualidade' },
+  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', description: 'Leve e rápido' },
+];
+
 export const SUGGESTIONS = [
   'Inteligência Artificial e o futuro do trabalho',
   'Como funciona o sistema imunológico humano',

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { useUsageStore } from '@/stores/usage-store';
-import { OPENROUTER_MODELS, OPENAI_MODELS } from '@/lib/constants';
+import { OPENROUTER_MODELS, OPENAI_MODELS, GEMINI_MODELS } from '@/lib/constants';
 import { decryptValue } from '@/lib/crypto';
 
 function ApiKeyInput({
@@ -79,7 +79,7 @@ export function SettingsPage() {
                 A configuração de chaves de API próprias está disponível exclusivamente para clientes do plano <strong>Enterprise</strong>.
               </p>
               <p className="text-sm text-muted-foreground max-w-md mt-1">
-                No plano Enterprise, você utiliza suas próprias chaves de API (OpenRouter, OpenAI, Replicate) e tem acesso a todas as funcionalidades do sistema com suporte dedicado.
+                No plano Enterprise, você utiliza suas próprias chaves de API (OpenRouter, OpenAI, Gemini, Replicate) e tem acesso a todas as funcionalidades do sistema com suporte dedicado.
               </p>
             </div>
             <div className="flex flex-col gap-3 w-full max-w-sm">
@@ -146,6 +146,7 @@ export function SettingsPage() {
   // Decrypted display values – kept in local state so the inputs show plain text
   const [openrouterDisplay, setOpenrouterDisplay] = useState('');
   const [openaiDisplay, setOpenaiDisplay] = useState('');
+  const [geminiDisplay, setGeminiDisplay] = useState('');
   const [replicateDisplay, setReplicateDisplay] = useState('');
 
   // Decrypt stored (possibly encrypted) values for display on mount / when stored value changes
@@ -156,6 +157,10 @@ export function SettingsPage() {
   useEffect(() => {
     decryptValue(settings.openaiApiKey).then(setOpenaiDisplay);
   }, [settings.openaiApiKey]);
+
+  useEffect(() => {
+    decryptValue(settings.geminiApiKey).then(setGeminiDisplay);
+  }, [settings.geminiApiKey]);
 
   useEffect(() => {
     decryptValue(settings.replicateApiKey).then(setReplicateDisplay);
@@ -185,24 +190,26 @@ export function SettingsPage() {
         {/* LLM Provider */}
         <section className="flex flex-col gap-4">
           <h2 className="text-base font-semibold border-b border-border pb-2">Provedor LLM</h2>
-
-          <div className="flex gap-3">
-            {(['openrouter', 'openai'] as const).map((p) => (
+          <p className="text-xs text-muted-foreground">
+            Com mais de uma chave configurada, o <strong>RouteLLM</strong> direciona tarefas leves (sugestões, clarificação) para modelos mais baratos e usa seu provedor padrão para geração de mapas e chat.
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            {(['openrouter', 'openai', 'gemini'] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => settings.setProvider(p)}
-                className={`flex-1 py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-all ${
+                className={`flex-1 min-w-[90px] py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-all ${
                   settings.provider === p
                     ? 'border-primary bg-primary/5 text-primary'
                     : 'border-border text-muted-foreground hover:border-foreground/30'
                 }`}
               >
-                {p === 'openrouter' ? 'OpenRouter' : 'OpenAI'}
+                {p === 'openrouter' ? 'OpenRouter' : p === 'openai' ? 'OpenAI' : 'Gemini'}
               </button>
             ))}
           </div>
 
-          {settings.provider === 'openrouter' ? (
+          {settings.provider === 'openrouter' && (
             <>
               <ApiKeyInput
                 label="Chave API OpenRouter"
@@ -229,7 +236,9 @@ export function SettingsPage() {
                 </a>
               </p>
             </>
-          ) : (
+          )}
+
+          {settings.provider === 'openai' && (
             <>
               <ApiKeyInput
                 label="Chave API OpenAI"
@@ -249,6 +258,35 @@ export function SettingsPage() {
                   ))}
                 </select>
               </div>
+            </>
+          )}
+
+          {settings.provider === 'gemini' && (
+            <>
+              <ApiKeyInput
+                label="Chave API Google Gemini"
+                value={geminiDisplay}
+                onChange={settings.setGeminiApiKey}
+                placeholder="AIza..."
+              />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Modelo</label>
+                <select
+                  value={settings.selectedModel}
+                  onChange={(e) => settings.setSelectedModel(e.target.value)}
+                  className="h-9 px-3 rounded-md border border-input bg-background text-sm"
+                >
+                  {GEMINI_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} — {m.description}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Obtenha sua chave em{' '}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  Google AI Studio
+                </a>
+              </p>
             </>
           )}
         </section>

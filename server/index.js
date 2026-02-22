@@ -9,7 +9,8 @@ import crypto from 'node:crypto';
 import { deleteMap, getMap, listMaps, putMap, validateMapId, validateUsername, getDataDir } from './storage.js';
 import { checkRateLimit } from './rateLimit.js';
 import { generateToken, verifyToken } from './auth.js';
-import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, migrateFilesystemUsers } from './users.js';
+import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getOrCreateUserFromFirebase, migrateFilesystemUsers } from './users.js';
+import { verifyFirebaseIdToken } from './firebaseAdmin.js';
 import { getUsage, incrementMapCount, incrementChatCount } from './usage.js';
 import { logger } from './logger.js';
 import { scheduleBackups, runBackup } from './backup.js';
@@ -584,6 +585,39 @@ const server = http.createServer(async (req, res) => {
       return await sendJson(res, 200, { token, user: { userId: user.userId, username: user.username, isAdmin: user.isAdmin } }, corsHeaders ?? {});
     }
 
+    // Firebase Auth — exchange Firebase ID token for app JWT
+    // POST /api/auth/firebase  { idToken: string }
+    if (url.pathname === '/api/auth/firebase' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { idToken } = parsed.body ?? {};
+      if (!idToken || typeof idToken !== 'string') {
+        return await sendJson(res, 400, { error: 'idToken é obrigatório' }, corsHeaders ?? {});
+      }
+      const firebaseUser = await verifyFirebaseIdToken(idToken);
+      if (!firebaseUser) {
+        return await sendJson(res, 401, { error: 'Token inválido ou expirado' }, corsHeaders ?? {});
+      }
+      try {
+        const { userId, username } = await getOrCreateUserFromFirebase({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.name,
+        });
+        const profile = await getUser(username);
+        const isAdmin = profile?.isAdmin ?? false;
+        logActivity({ username, action: 'login', ip: req.socket?.remoteAddress });
+        const token = await generateToken({ userId, username, isAdmin });
+        return await sendJson(res, 200, {
+          token,
+          user: { userId, username, isAdmin },
+        }, corsHeaders ?? {});
+      } catch (e) {
+        logger.error('Firebase auth error', { error: String(e) });
+        return await sendJson(res, 500, { error: 'Erro ao criar sessão' }, corsHeaders ?? {});
+      }
+    }
+
     if (url.pathname === '/api/auth/me' && req.method === 'GET') {
       const authHeader = req.headers['authorization'];
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1084,7 +1118,7 @@ process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 // ---------------------------------------------------------------------------
 
 const port = Number(process.env.PORT ?? 8787);
-server.listen(port, async () => {
+server.listen(port, '0.0.0.0', async () => {
   logger.info('Server started', {
     port,
     env: process.env.NODE_ENV ?? 'development',
