@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- Central brain shape -->
+  <ellipse cx="100" cy="95" rx="38" ry="35" fill="url(#brainGrad)" opacity="0.9"/>
+  <ellipse cx="90" cy="88" rx="22" ry="20" fill="url(#brainGrad2)" opacity="0.6"/>
+  <ellipse cx="112" cy="88" rx="20" ry="18" fill="url(#brainGrad3)" opacity="0.5"/>
+
+  <!-- Branches - top left (yellow/orange) -->
+  <path d="M75 75 Q55 55 40 40" stroke="#F59E0B" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M70 82 Q45 72 25 65" stroke="#F59E0B" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  <path d="M68 90 Q42 88 20 92" stroke="#EAB308" stroke-width="3" stroke-linecap="round" fill="none"/>
+
+  <!-- Branches - top right (blue) -->
+  <path d="M125 75 Q145 55 160 40" stroke="#3B82F6" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M130 82 Q155 72 175 65" stroke="#3B82F6" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  <path d="M132 90 Q158 88 180 92" stroke="#60A5FA" stroke-width="3" stroke-linecap="round" fill="none"/>
+
+  <!-- Branches - bottom left (green) -->
+  <path d="M75 115 Q55 135 40 155" stroke="#10B981" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M70 108 Q45 118 25 130" stroke="#10B981" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Branches - bottom right (teal/green) -->
+  <path d="M125 115 Q145 135 160 155" stroke="#14B8A6" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M130 108 Q155 118 175 130" stroke="#0D9488" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Branch - top center -->
+  <path d="M100 62 Q100 42 100 28" stroke="#F97316" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Icon circles at branch endpoints -->
+  <!-- Top-left: lightbulb -->
+  <circle cx="38" cy="38" r="12" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <path d="M35 35 Q38 30 41 35 L40 41 H36 Z" fill="#F59E0B"/>
+  <line x1="36" y1="42" x2="40" y2="42" stroke="#F59E0B" stroke-width="1.2" stroke-linecap="round"/>
+
+  <!-- Left: lightbulb 2 -->
+  <circle cx="22" cy="64" r="10" fill="#FEF3C7" stroke="#EAB308" stroke-width="1.5"/>
+  <path d="M19.5 61.5 Q22 57.5 24.5 61.5 L23.5 66 H20.5 Z" fill="#EAB308"/>
+  <line x1="20.5" y1="67" x2="23.5" y2="67" stroke="#EAB308" stroke-width="1" stroke-linecap="round"/>
+
+  <!-- Far left: gear -->
+  <circle cx="18" cy="92" r="10" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+  <circle cx="18" cy="92" r="4" fill="none" stroke="#10B981" stroke-width="1.5"/>
+  <g stroke="#10B981" stroke-width="1.2" stroke-linecap="round">
+    <line x1="18" y1="85" x2="18" y2="87"/><line x1="18" y1="97" x2="18" y2="99"/>
+    <line x1="11" y1="92" x2="13" y2="92"/><line x1="23" y1="92" x2="25" y2="92"/>
+  </g>
+
+  <!-- Top center: cloud -->
+  <circle cx="100" cy="26" r="11" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+  <path d="M93 28 Q93 23 97 23 Q98 20 102 20 Q106 20 107 23 Q110 23 110 27 Q110 30 107 30 H95 Q93 30 93 28Z" fill="#3B82F6" opacity="0.8"/>
+
+  <!-- Top-right: cloud 2 -->
+  <circle cx="162" cy="38" r="12" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+  <path d="M155 40 Q155 35 159 35 Q160 32 164 32 Q168 32 169 35 Q172 35 172 39 Q172 42 169 42 H157 Q155 42 155 40Z" fill="#3B82F6" opacity="0.8"/>
+
+  <!-- Right: document -->
+  <circle cx="178" cy="64" r="10" fill="#EFF6FF" stroke="#60A5FA" stroke-width="1.5"/>
+  <rect x="173" y="59" width="10" height="11" rx="1.5" fill="none" stroke="#60A5FA" stroke-width="1.2"/>
+  <line x1="175" y1="62" x2="181" y2="62" stroke="#60A5FA" stroke-width="0.8"/>
+  <line x1="175" y1="64.5" x2="181" y2="64.5" stroke="#60A5FA" stroke-width="0.8"/>
+  <line x1="175" y1="67" x2="179" y2="67" stroke="#60A5FA" stroke-width="0.8"/>
+
+  <!-- Far right: gear -->
+  <circle cx="182" cy="92" r="10" fill="#ECFDF5" stroke="#0D9488" stroke-width="1.5"/>
+  <circle cx="182" cy="92" r="4" fill="none" stroke="#0D9488" stroke-width="1.5"/>
+  <g stroke="#0D9488" stroke-width="1.2" stroke-linecap="round">
+    <line x1="182" y1="85" x2="182" y2="87"/><line x1="182" y1="97" x2="182" y2="99"/>
+    <line x1="175" y1="92" x2="177" y2="92"/><line x1="187" y1="92" x2="189" y2="92"/>
+  </g>
+
+  <!-- Bottom-left: document -->
+  <circle cx="22" cy="132" r="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <rect x="17" y="127" width="10" height="11" rx="1.5" fill="none" stroke="#F59E0B" stroke-width="1.2"/>
+  <line x1="19" y1="130" x2="25" y2="130" stroke="#F59E0B" stroke-width="0.8"/>
+  <line x1="19" y1="132.5" x2="25" y2="132.5" stroke="#F59E0B" stroke-width="0.8"/>
+  <line x1="19" y1="135" x2="23" y2="135" stroke="#F59E0B" stroke-width="0.8"/>
+
+  <!-- Bottom-left 2: gear -->
+  <circle cx="38" cy="157" r="12" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+  <circle cx="38" cy="157" r="5" fill="none" stroke="#10B981" stroke-width="1.5"/>
+  <g stroke="#10B981" stroke-width="1.2" stroke-linecap="round">
+    <line x1="38" y1="149" x2="38" y2="151"/><line x1="38" y1="163" x2="38" y2="165"/>
+    <line x1="30" y1="157" x2="32" y2="157"/><line x1="44" y1="157" x2="46" y2="157"/>
+  </g>
+
+  <!-- Bottom-right: lightbulb -->
+  <circle cx="178" cy="132" r="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+  <path d="M175.5 129.5 Q178 125.5 180.5 129.5 L179.5 134 H176.5 Z" fill="#F59E0B"/>
+  <line x1="176.5" y1="135" x2="179.5" y2="135" stroke="#F59E0B" stroke-width="1" stroke-linecap="round"/>
+
+  <!-- Bottom-right 2: document -->
+  <circle cx="162" cy="157" r="12" fill="#EFF6FF" stroke="#14B8A6" stroke-width="1.5"/>
+  <rect x="156" y="151" width="12" height="13" rx="1.5" fill="none" stroke="#14B8A6" stroke-width="1.2"/>
+  <line x1="158.5" y1="154.5" x2="165.5" y2="154.5" stroke="#14B8A6" stroke-width="0.8"/>
+  <line x1="158.5" y1="157.5" x2="165.5" y2="157.5" stroke="#14B8A6" stroke-width="0.8"/>
+  <line x1="158.5" y1="160.5" x2="163" y2="160.5" stroke="#14B8A6" stroke-width="0.8"/>
+
+  <!-- "3Maps" text on brain -->
+  <text x="100" y="103" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="26" fill="white" stroke="rgba(0,0,0,0.15)" stroke-width="0.5">3Maps</text>
+
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="brainGrad" x1="62" y1="60" x2="138" y2="130">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="50%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+    <linearGradient id="brainGrad2" x1="68" y1="68" x2="112" y2="108">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="100%" stop-color="#34D399"/>
+    </linearGradient>
+    <linearGradient id="brainGrad3" x1="92" y1="70" x2="132" y2="106">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#2DD4BF"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -1,0 +1,41 @@
+@keyframes postgen-indeterminate {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0.55;
+  }
+  45% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateX(240%);
+    opacity: 0.55;
+  }
+}
+
+.postgen-gaugeTrack {
+  height: 2px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: hsl(var(--muted) / 0.35);
+}
+
+.postgen-gaugeBar {
+  height: 100%;
+  width: 42%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--primary) / 0.10),
+    hsl(var(--primary) / 0.55),
+    hsl(var(--primary) / 0.10)
+  );
+  animation: postgen-indeterminate 1.25s ease-in-out infinite;
+  filter: saturate(1.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .postgen-gaugeBar {
+    animation: none;
+  }
+}
+
