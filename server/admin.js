@@ -406,12 +406,15 @@ export async function handleUpdateSettings(body, adminUsername) {
     throw new Error('Invalid settings body');
   }
 
-  // Allowed setting keys
+  // Allowed setting keys (inclui modelos habilitados por provedor para roteamento)
   const allowedKeys = [
     'openrouter_api_key',
     'openai_api_key',
     'gemini_api_key',
     'replicate_api_key',
+    'openrouter_enabled_models',
+    'openai_enabled_models',
+    'gemini_enabled_models',
     'llm_default_provider',
     'llm_default_model',
     'stripe_publishable_key',

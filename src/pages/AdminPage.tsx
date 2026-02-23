@@ -1099,6 +1099,7 @@ function LLMApiTab() {
   const enabledModels: string[] = (() => {
     try {
       const raw = settings[enabledModelsKey];
+      if (Array.isArray(raw)) return raw;
       if (typeof raw === 'string') return JSON.parse(raw);
     } catch { /* ignore */ }
     return [];

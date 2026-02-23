@@ -6,7 +6,7 @@
 import pkg from '../../package.json';
 
 export const APP_VERSION = pkg.version;
-export const RELEASE_ID = 5;
+export const RELEASE_ID = 6;
 
 export interface ReleaseNote {
   version: string;
@@ -24,6 +24,15 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       'Menu de ações colapsável em mobile — ícone para abrir/fechar',
       'Filtro por tags removido de Meus Mapas — usar /tags para filtrar',
       'Página Tags responsiva — barra horizontal de tags em mobile',
+    ],
+  },
+  {
+    version: '0.1.4',
+    date: '2026-02-20',
+    title: 'R6 — Diálogo de clarificação em mobile',
+    items: [
+      'Diálogo Pensamento Profundo / Pesquisador Sênior: scroll em mobile quando há muitas perguntas ou fontes',
+      'Botões Cancelar e Continuar sempre visíveis no rodapé fixo',
     ],
   },
   {

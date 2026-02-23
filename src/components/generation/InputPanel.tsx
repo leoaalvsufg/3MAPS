@@ -106,65 +106,67 @@ export function InputPanel() {
   return (
 		<div className="w-full max-w-3xl mx-auto flex flex-col gap-6">
 			<Dialog open={clarifyOpen} onOpenChange={(open) => !open && closeClarify(null)}>
-				<DialogContent className="max-w-xl">
-					<DialogHeader>
+				<DialogContent className="max-w-xl max-h-[90dvh] flex flex-col overflow-hidden p-4 sm:p-6">
+					<DialogHeader className="shrink-0">
 						<DialogTitle>Pensamento profundo — ajustar antes de gerar</DialogTitle>
 						<DialogDescription>
 							Responda rápido. Isso melhora o mapa, o artigo e o modo de apresentação.
 						</DialogDescription>
 					</DialogHeader>
 
-					{clarifyReq?.recommended && (
-						<div className="rounded-lg border border-border bg-muted/40 p-3">
-							<div className="text-xs text-muted-foreground">Sugestão de apresentação</div>
-							<div className="text-sm font-medium mt-0.5">
-								{clarifyReq.recommended.graphType
-									? clarifyReq.recommended.graphType
-									: clarifyReq.recommended.mode}
+					<div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
+						{clarifyReq?.recommended && (
+							<div className="rounded-lg border border-border bg-muted/40 p-3 mb-4">
+								<div className="text-xs text-muted-foreground">Sugestão de apresentação</div>
+								<div className="text-sm font-medium mt-0.5">
+									{clarifyReq.recommended.graphType
+										? clarifyReq.recommended.graphType
+										: clarifyReq.recommended.mode}
+								</div>
+								{clarifyReq.recommended.reason && (
+									<div className="text-xs text-muted-foreground mt-1">{clarifyReq.recommended.reason}</div>
+								)}
 							</div>
-							{clarifyReq.recommended.reason && (
-								<div className="text-xs text-muted-foreground mt-1">{clarifyReq.recommended.reason}</div>
-							)}
-						</div>
-					)}
+						)}
 
-					<div className="grid gap-3">
-						{clarifyReq?.questions.map((q, idx) => (
-							<div key={q} className="grid gap-1">
-								<div className="text-sm font-medium">{q}</div>
-								<Input
-									value={clarifyAnswers[idx] ?? ''}
-									onChange={(e) => {
-										const next = [...clarifyAnswers];
-										next[idx] = e.target.value;
-										setClarifyAnswers(next);
-									}}
-									placeholder="Sua resposta..."
-									className="h-9"
-								/>
+						<div className="grid gap-3">
+							{clarifyReq?.questions.map((q, idx) => (
+								<div key={q} className="grid gap-1">
+									<div className="text-sm font-medium">{q}</div>
+									<Input
+										value={clarifyAnswers[idx] ?? ''}
+										onChange={(e) => {
+											const next = [...clarifyAnswers];
+											next[idx] = e.target.value;
+											setClarifyAnswers(next);
+										}}
+										placeholder="Sua resposta..."
+										className="h-9"
+									/>
+								</div>
+							))}
+						</div>
+
+						{(clarifyReq?.sources?.length ?? 0) > 0 && (
+							<div className="rounded-lg border border-border bg-card p-3 mt-4">
+								<div className="text-xs font-medium text-muted-foreground mb-2">Fontes sugeridas</div>
+								<ul className="grid gap-1 text-xs text-muted-foreground">
+									{clarifyReq?.sources?.slice(0, 5).map((s, i) => (
+										<li key={`${s.title}-${i}`} className="flex flex-col">
+											<span className="text-foreground/90">{s.title}</span>
+											{s.url ? (
+												<a className="underline underline-offset-2 hover:opacity-80 break-all" href={s.url} target="_blank" rel="noreferrer">
+													{s.url}
+												</a>
+											) : null}
+										</li>
+									))}
+								</ul>
 							</div>
-						))}
+						)}
 					</div>
 
-					{(clarifyReq?.sources?.length ?? 0) > 0 && (
-						<div className="rounded-lg border border-border bg-card p-3">
-							<div className="text-xs font-medium text-muted-foreground mb-2">Fontes sugeridas</div>
-							<ul className="grid gap-1 text-xs text-muted-foreground">
-								{clarifyReq?.sources?.slice(0, 5).map((s, i) => (
-									<li key={`${s.title}-${i}`} className="flex flex-col">
-										<span className="text-foreground/90">{s.title}</span>
-										{s.url ? (
-											<a className="underline underline-offset-2 hover:opacity-80" href={s.url} target="_blank" rel="noreferrer">
-												{s.url}
-											</a>
-										) : null}
-									</li>
-								))}
-							</ul>
-						</div>
-					)}
-
-					<DialogFooter>
+					<DialogFooter className="shrink-0 pt-4 border-t border-border mt-4">
 						<Button variant="outline" onClick={() => closeClarify(null)}>
 							Cancelar
 						</Button>
