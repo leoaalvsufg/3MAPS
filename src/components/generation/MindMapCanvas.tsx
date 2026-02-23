@@ -393,18 +393,22 @@ function buildLayout(
     curLeft += ch + GAP_UNITS;
   }
 
-  const layoutType = formato.layout;
+  const layoutType = formato.layout ?? 'radial';
   const useDagre = ['tree-horizontal', 'tree-vertical', 'org-chart'].includes(layoutType);
   let finalNodes = nodes;
 
-  if (useDagre) {
-    const { nodes: dagreNodes } = getLayoutedElements(
-      nodes,
-      edges,
-      layoutType,
-      showAll ? 'detailed' : 'compact'
-    );
-    finalNodes = dagreNodes as Node<MindmapNodeData>[];
+  if (useDagre && nodes.length > 0) {
+    try {
+      const { nodes: dagreNodes } = getLayoutedElements(
+        nodes,
+        edges,
+        layoutType,
+        showAll ? 'detailed' : 'compact'
+      );
+      finalNodes = dagreNodes as Node<MindmapNodeData>[];
+    } catch {
+      finalNodes = nodes;
+    }
   }
 
   const resolved = resolveOverlaps(finalNodes as MindmapNodeWithMeasured[], 20);
@@ -445,11 +449,20 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   );
 
   const computeLayout = useCallback(() => {
-    const { nodes: layoutNodes, edges: layoutEdges } = buildLayout(safeData.nodeData, {
-      showAllDetails,
-      formato,
-    });
-    return { layoutNodes, layoutEdges };
+    try {
+      const { nodes: layoutNodes, edges: layoutEdges } = buildLayout(safeData.nodeData, {
+        showAllDetails,
+        formato,
+      });
+      return { layoutNodes: layoutNodes ?? [], layoutEdges: layoutEdges ?? [] };
+    } catch (err) {
+      console.error('[MindMapCanvas] Layout error:', err);
+      const fallback = buildLayout(
+        { id: 'root', topic: 'Mapa Mental', children: [] },
+        { showAllDetails, formato }
+      );
+      return { layoutNodes: fallback.nodes, layoutEdges: fallback.edges };
+    }
   }, [safeData, showAllDetails, formato]);
 
   const initialLayout = useMemo(() => computeLayout(), [computeLayout]);
@@ -465,11 +478,11 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   }, [computeLayout, computeDisplayNodes]);
   const edges = useMemo(() => {
     const targetLevels = new Map<string, number>();
-    for (const n of layoutNodes) {
+    for (const n of nodes) {
       const d = n.data as MindmapNodeData;
-      if (d.level != null) targetLevels.set(n.id, d.level);
+      if (d?.level != null) targetLevels.set(n.id, d.level);
     }
-    const theme = formato.colorTheme;
+    const theme = formato.colorTheme ?? 'oceano';
     return layoutEdges.map((e) => {
       const isConnected = selectedId ? e.source === selectedId || e.target === selectedId : false;
       const targetLevel = targetLevels.get(e.target) ?? 0;
@@ -483,7 +496,7 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
         },
       };
     });
-  }, [layoutEdges, layoutNodes, selectedId, formato.colorTheme]);
+  }, [layoutEdges, nodes, selectedId, formato.colorTheme]);
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     let newSelectedId: string | null = null;
@@ -616,10 +629,10 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   // Build a lightweight fingerprint of the layout so we can detect content changes
   // (e.g. definitions added by "Detalhado") even when the node count stays the same.
   const layoutFingerprint = useMemo(() => {
-    return layoutNodes
-      .map((n) => `${n.id}:${(n.data as MindmapNodeData).label}:${(n.data as MindmapNodeData).definition ?? ''}`)
+    return nodes
+      .map((n) => `${n.id}:${(n.data as MindmapNodeData)?.label ?? ''}:${(n.data as MindmapNodeData)?.definition ?? ''}`)
       .join('|');
-  }, [layoutNodes]);
+  }, [nodes]);
 
   useEffect(() => {
     if (!wrapperRef.current) return;

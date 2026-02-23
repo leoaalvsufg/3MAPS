@@ -156,11 +156,13 @@ export function getLayoutedElements<T extends NodeDataWithLevel>(
   const layoutedNodes = nodesWithMeasured.map((node) => {
     const nodeWithPos = g.node(node.id);
     const { width, height } = node.measured ?? { width: DEFAULT_W, height: DEFAULT_H };
+    const x = nodeWithPos?.x ?? 0;
+    const y = nodeWithPos?.y ?? 0;
     return {
       ...node,
       position: {
-        x: nodeWithPos.x - width / 2,
-        y: nodeWithPos.y - height / 2,
+        x: x - width / 2,
+        y: y - height / 2,
       },
       measured: node.measured,
     };

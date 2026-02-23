@@ -74,9 +74,11 @@ export const COLOR_THEMES: Record<ColorTheme, LevelColors[]> = {
   ],
 };
 
+const FALLBACK_PALETTE = COLOR_THEMES.oceano;
+
 /** Retorna as cores do nível (0–4). Níveis > 4 usam nível 4. */
 export function getColorsForLevel(theme: ColorTheme, level: number): LevelColors {
-  const palette = COLOR_THEMES[theme];
-  const idx = Math.min(level, palette.length - 1);
+  const palette = COLOR_THEMES[theme as keyof typeof COLOR_THEMES] ?? FALLBACK_PALETTE;
+  const idx = Math.min(Math.max(0, level), palette.length - 1);
   return palette[idx];
 }

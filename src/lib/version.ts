@@ -38,6 +38,15 @@ export const RELEASE_NOTES: ReleaseNote[] = [
   {
     version: '0.1.5',
     date: '2026-02-23',
+    title: 'R8.1 — Fix tela em branco',
+    items: [
+      'Correção: layoutNodes inexistente causava ReferenceError em MapPage',
+      'Guards defensivos: dagre nodeWithPos, getColorsForLevel, formato',
+    ],
+  },
+  {
+    version: '0.1.5',
+    date: '2026-02-23',
     title: 'R8 — Reorganizar + Drag manual',
     items: [
       'Reorganizar: recalcula layout com dagre + anti-sobreposição, fitView 300ms',
