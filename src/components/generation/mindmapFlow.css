@@ -65,6 +65,11 @@
   --xy-selection-border: 1px dotted rgba(123, 97, 255, 0.35);
 }
 
+/* Node — transição suave ao Reorganizar */
+.mindmap-flow .react-flow__node {
+  transition: transform 300ms ease;
+}
+
 /* Node */
 .mindmap-node {
   min-width: 200px;

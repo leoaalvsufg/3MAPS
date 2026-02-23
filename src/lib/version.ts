@@ -6,7 +6,7 @@
 import pkg from '../../package.json';
 
 export const APP_VERSION = pkg.version;
-export const RELEASE_ID = 7;
+export const RELEASE_ID = 8;
 
 export interface ReleaseNote {
   version: string;
@@ -33,6 +33,16 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     items: [
       'Diálogo Pensamento Profundo / Pesquisador Sênior: scroll em mobile quando há muitas perguntas ou fontes',
       'Botões Cancelar e Continuar sempre visíveis no rodapé fixo',
+    ],
+  },
+  {
+    version: '0.1.5',
+    date: '2026-02-23',
+    title: 'R8 — Reorganizar + Drag manual',
+    items: [
+      'Reorganizar: recalcula layout com dagre + anti-sobreposição, fitView 300ms',
+      'Drag manual: arrastar nós livremente, correção de sobreposição no drop',
+      'Seleção múltipla: Shift+click, arrastar grupo mantém posições relativas',
     ],
   },
   {

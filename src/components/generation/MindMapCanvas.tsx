@@ -6,7 +6,7 @@ import { createContext, forwardRef, useCallback, useContext, useEffect, useImper
 import {
   ReactFlow,
   Background,
-		BackgroundVariant,
+  BackgroundVariant,
   Controls,
   MiniMap,
   Handle,
@@ -17,11 +17,17 @@ import {
   type NodeProps,
   type NodeTypes,
   type OnNodesChange,
+  type OnNodeDragStop,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import { Plus, Trash2 } from 'lucide-react';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import { getColorsForLevel } from '@/lib/formatoThemes';
+import {
+  estimateNodeDimensions,
+  resolveOverlaps,
+  getLayoutedElements,
+} from '@/lib/mindmapLayout';
 import { FORMATO_PADRAO, type NodeShape, type LevelColors } from '@/types/formato';
 import type { MindElixirData, MindElixirNode } from '@/types/mindmap';
 
@@ -61,6 +67,7 @@ function getNodeStyle(
 
 export interface MindMapCanvasHandle {
   fitView: () => void;
+  reorganize: () => void;
   getViewportElement: () => HTMLElement | null;
   getFlowInstance: () => ReactFlowInstance | null;
 }
@@ -103,13 +110,17 @@ function useMindmapActions(): MindmapActions {
   return ctx;
 }
 
-type MindmapNodeData = {
+export type MindmapNodeData = {
   label: string;
   definition?: string;
   showDefinition?: boolean;
   level?: number;
   nodeShape?: import('@/types/formato').NodeShape;
   colorTheme?: import('@/types/formato').ColorTheme;
+};
+
+type MindmapNodeWithMeasured = Node<MindmapNodeData> & {
+  measured?: { width: number; height: number };
 };
 
 function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
@@ -269,7 +280,6 @@ function buildLayout(
   root: MindElixirNode,
   opts?: {
     showAllDetails?: boolean;
-    selectedId?: string | null;
     formato?: import('@/types/formato').FormatoConfig;
   }
 ): { nodes: Node<MindmapNodeData>[]; edges: Edge[] } {
@@ -280,16 +290,15 @@ function buildLayout(
   const DEF_EXTRA = 0.7;
 
   const showAll = opts?.showAllDetails ?? true;
-  const selId = opts?.selectedId ?? null;
   const formato = opts?.formato ?? FORMATO_PADRAO;
 
   const safeRoot = deepCloneNode(root);
   const heights = new Map<string, number>();
 
-  /** Returns true when the node will visually show its definition */
+  /** Returns true when the node will visually show its definition (for layout measure). Use showAll only so layout is stable when selecting. */
   const willShowDef = (n: MindElixirNode): boolean => {
     if (n.id === 'root' || !n.definition) return false;
-    return showAll || n.id === selId;
+    return showAll;
   };
 
   const measure = (n: MindElixirNode): number => {
@@ -311,8 +320,8 @@ function buildLayout(
   const nodes: Node<MindmapNodeData>[] = [];
   const edges: Edge[] = [];
 
-  const addNode = (n: MindElixirNode, x: number, y: number, level: number) => {
-    nodes.push({
+  const addNode = (n: MindElixirNode, x: number, y: number, level: number, nodeRef: Node<MindmapNodeData>[]) => {
+    const node: Node<MindmapNodeData> = {
       id: n.id,
       type: 'mindmapNode',
       position: { x, y },
@@ -323,10 +332,13 @@ function buildLayout(
         nodeShape: formato.nodeShape,
         colorTheme: formato.colorTheme,
       },
-    });
+    };
+    const measured = estimateNodeDimensions(node, showAll ? 'detailed' : 'compact');
+    (node as MindmapNodeWithMeasured).measured = measured;
+    nodeRef.push(node);
   };
 
-  addNode(safeRoot, 0, 0, 0);
+  addNode(safeRoot, 0, 0, 0, nodes);
 
   const leftChildren = (safeRoot.children ?? []).filter((c) => (c.direction ?? RIGHT) === LEFT);
   const rightChildren = (safeRoot.children ?? []).filter((c) => (c.direction ?? RIGHT) === RIGHT);
@@ -344,7 +356,7 @@ function buildLayout(
     const yCenterUnits = yTopUnits + h / 2;
     const x = (side === RIGHT ? 1 : -1) * depth * X_SPACING;
     const y = yCenterUnits * Y_SPACING;
-    addNode(n, x, y, depth);
+    addNode(n, x, y, depth, nodes);
 
     const sourceHandle = side === RIGHT ? 'r' : 'l';
     const targetHandle = side === RIGHT ? 'tl' : 'tr';
@@ -381,7 +393,22 @@ function buildLayout(
     curLeft += ch + GAP_UNITS;
   }
 
-  return { nodes, edges };
+  const layoutType = formato.layout;
+  const useDagre = ['tree-horizontal', 'tree-vertical', 'org-chart'].includes(layoutType);
+  let finalNodes = nodes;
+
+  if (useDagre) {
+    const { nodes: dagreNodes } = getLayoutedElements(
+      nodes,
+      edges,
+      layoutType,
+      showAll ? 'detailed' : 'compact'
+    );
+    finalNodes = dagreNodes as Node<MindmapNodeData>[];
+  }
+
+  const resolved = resolveOverlaps(finalNodes as MindmapNodeWithMeasured[], 20);
+  return { nodes: resolved, edges };
 }
 
 export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>(function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled, formato: formatoProp }, ref) {
@@ -401,22 +428,41 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
 	const showAllDetails = detailsEnabled ?? true;
 	const formato = formatoProp ?? FORMATO_PADRAO;
 
-  const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
-    return buildLayout(safeData.nodeData, { showAllDetails, selectedId, formato });
-  }, [safeData, showAllDetails, selectedId, formato]);
-  const nodes = useMemo(() => {
-		return layoutNodes.map((n) => {
-			const isSelected = selectedId === n.id;
-			return {
-				...n,
-				selected: isSelected,
-				data: {
-					...(n.data as MindmapNodeData),
-					showDefinition: showAllDetails ? true : isSelected,
-				},
-			};
-		});
-	}, [layoutNodes, selectedId, showAllDetails]);
+  const computeDisplayNodes = useCallback(
+    (layoutNodes: Node<MindmapNodeData>[]) =>
+      layoutNodes.map((n) => {
+        const isSelected = selectedId === n.id;
+        return {
+          ...n,
+          selected: isSelected,
+          data: {
+            ...(n.data as MindmapNodeData),
+            showDefinition: showAllDetails ? true : isSelected,
+          },
+        };
+      }),
+    [selectedId, showAllDetails]
+  );
+
+  const computeLayout = useCallback(() => {
+    const { nodes: layoutNodes, edges: layoutEdges } = buildLayout(safeData.nodeData, {
+      showAllDetails,
+      formato,
+    });
+    return { layoutNodes, layoutEdges };
+  }, [safeData, showAllDetails, formato]);
+
+  const initialLayout = useMemo(() => computeLayout(), [computeLayout]);
+  const [nodes, setNodesState] = useState<Node<MindmapNodeData>[]>(() =>
+    computeDisplayNodes(initialLayout.layoutNodes)
+  );
+  const [layoutEdges, setLayoutEdges] = useState<Edge[]>(initialLayout.layoutEdges);
+
+  useEffect(() => {
+    const { layoutNodes, layoutEdges: nextEdges } = computeLayout();
+    setLayoutEdges(nextEdges);
+    setNodesState(computeDisplayNodes(layoutNodes));
+  }, [computeLayout, computeDisplayNodes]);
   const edges = useMemo(() => {
     const targetLevels = new Map<string, number>();
     for (const n of layoutNodes) {
@@ -439,14 +485,62 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
     });
   }, [layoutEdges, layoutNodes, selectedId, formato.colorTheme]);
 
-  const onNodesChange: OnNodesChange = useCallback(
-    (changes) => {
-      const next = applyNodeChanges(changes, nodes);
-      const selected = next.find((n) => n.selected);
-      setSelectedId(selected?.id ?? null);
-    },
-    [nodes]
-  );
+  const onNodesChange: OnNodesChange = useCallback((changes) => {
+    let newSelectedId: string | null = null;
+    setNodesState((current) => {
+      const next = applyNodeChanges(changes, current);
+      const sel = next.find((n) => n.selected);
+      newSelectedId = sel?.id ?? null;
+      return next;
+    });
+    setSelectedId(newSelectedId);
+  }, []);
+
+  const onNodeDragStop: OnNodeDragStop = useCallback((_evt, draggedNode) => {
+    setNodesState((current) => {
+      const moved = current.find((n) => n.id === draggedNode.id);
+      if (!moved) return current;
+
+      const mWithMeasured = moved as MindmapNodeWithMeasured;
+      const mW = mWithMeasured.measured?.width ?? 180;
+      const mH = mWithMeasured.measured?.height ?? 50;
+      let x = draggedNode.position.x;
+      let y = draggedNode.position.y;
+      const padding = 20;
+
+      for (let attempt = 0; attempt < 50; attempt++) {
+        let clean = true;
+        for (const other of current) {
+          if (other.id === moved.id) continue;
+          const oWithMeasured = other as MindmapNodeWithMeasured;
+          const oW = oWithMeasured.measured?.width ?? 180;
+          const oH = oWithMeasured.measured?.height ?? 50;
+
+          const mCx = x + mW / 2;
+          const mCy = y + mH / 2;
+          const oCx = other.position.x + oW / 2;
+          const oCy = other.position.y + oH / 2;
+
+          const overlapX = mW / 2 + oW / 2 + padding - Math.abs(mCx - oCx);
+          const overlapY = mH / 2 + oH / 2 + padding - Math.abs(mCy - oCy);
+
+          if (overlapX > 0 && overlapY > 0) {
+            clean = false;
+            if (overlapX < overlapY) {
+              x += mCx < oCx ? -overlapX : overlapX;
+            } else {
+              y += mCy < oCy ? -overlapY : overlapY;
+            }
+          }
+        }
+        if (clean) break;
+      }
+
+      return current.map((n) =>
+        n.id === moved.id ? { ...n, position: { x, y } } : n
+      );
+    });
+  }, []);
 
   const actions = useMemo<MindmapActions>(() => {
     return {
@@ -490,6 +584,19 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   const didInitialFitRef = useRef(false);
   const lastLayoutFingerprintRef = useRef('');
 
+  const reorganize = useCallback(() => {
+    const { layoutNodes, layoutEdges } = computeLayout();
+    setLayoutEdges(layoutEdges);
+    setNodesState(computeDisplayNodes(layoutNodes));
+    requestAnimationFrame(() => {
+      if (instance) {
+        try {
+          instance.fitView({ padding: 0.15, duration: 300 });
+        } catch { /* ignore */ }
+      }
+    });
+  }, [computeLayout, computeDisplayNodes, instance]);
+
   useImperativeHandle(ref, () => ({
     fitView: () => {
       if (!instance) return;
@@ -499,11 +606,12 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
         } catch { /* ignore */ }
       });
     },
+    reorganize,
     getViewportElement: () => {
       return wrapperRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null;
     },
     getFlowInstance: () => instance,
-  }), [instance]);
+  }), [instance, reorganize]);
 
   // Build a lightweight fingerprint of the layout so we can detect content changes
   // (e.g. definitions added by "Detalhado") even when the node count stays the same.
@@ -549,11 +657,14 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
           edges={edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
+          onNodeDragStop={onNodeDragStop}
 					onPaneClick={() => setSelectedId(null)}
           onInit={setInstance}
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           elementsSelectable
+          selectNodesOnDrag={false}
+          multiSelectionKeyCode="Shift"
           fitView
           proOptions={{ hideAttribution: true }}
         >

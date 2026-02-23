@@ -474,7 +474,7 @@ export function MapPage() {
             onDetailed={() => handlePostGenAction('detalhado')}
             onTranslate={() => handlePostGenAction('traduzir')}
             onRegenerate={() => handlePostGenAction('regenerar')}
-            onReorganize={() => canvasRef.current?.fitView()}
+            onReorganize={() => canvasRef.current?.reorganize?.()}
             onExport={handleExport}
             onChat={handleChat}
 				graphType={graphType}
