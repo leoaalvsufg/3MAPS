@@ -6,7 +6,7 @@
 import pkg from '../../package.json';
 
 export const APP_VERSION = pkg.version;
-export const RELEASE_ID = 6;
+export const RELEASE_ID = 7;
 
 export interface ReleaseNote {
   version: string;
@@ -33,6 +33,18 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     items: [
       'Diálogo Pensamento Profundo / Pesquisador Sênior: scroll em mobile quando há muitas perguntas ou fontes',
       'Botões Cancelar e Continuar sempre visíveis no rodapé fixo',
+    ],
+  },
+  {
+    version: '0.1.5',
+    date: '2026-02-23',
+    title: 'R7 — MapaMental Visual Engine',
+    items: [
+      'Painel Formato: estilo dos nós, paleta de cores, tipo de conexão, layout',
+      '10 temas de cores (Aurora, Floresta, Oceano, Vulcão, Lavanda, Sol, Neutro, Candy, Terra, Matrix)',
+      '8 estilos de nó (Clássico, Cápsula, Vidro, Neon, Plano, Contorno, Card, Etiqueta)',
+      '6 tipos de conexão (Bézier, Step, Reta, Orgânica, Angular, Elbow)',
+      '10 combinações prontas (Deep Space, Jardim Zen, Corporate Clean, Neon City, etc.)',
     ],
   },
   {

@@ -19,6 +19,7 @@ import { parseJSON } from '@/services/llm/client';
 import { callRoutedLLM } from '@/services/llm/routedClient';
 		import { getNodeByNodeDetailedRefinementPrompt, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
+import { FORMATO_PADRAO } from '@/types/formato';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 
 export function MapPage() {
@@ -408,6 +409,7 @@ export function MapPage() {
 	};
 
 	const detailsEnabled = map.detailsEnabled ?? true;
+	const formato = map.formato ?? FORMATO_PADRAO;
 	const selectedNode = findNodeById(map.mindElixirData?.nodeData as MindElixirNode | undefined, selectedNodeId);
 
   return (
@@ -479,6 +481,8 @@ export function MapPage() {
 				onGraphTypeChange={handleGraphTypeChange}
 					detailsEnabled={detailsEnabled}
 					onDetailsEnabledChange={(enabled) => updateMap(map.id, { detailsEnabled: enabled })}
+					formato={formato}
+					onFormatoChange={(f) => updateMap(map.id, { formato: f })}
             isLoading={isLoading}
 				activeAction={activePostGenAction ?? undefined}
           />
@@ -497,6 +501,7 @@ export function MapPage() {
 							}}
 							onSelectionChange={setSelectedNodeId}
 							detailsEnabled={detailsEnabled}
+							formato={formato}
 						/>
 				) : (
 					<GraphCanvas graphType={graphType} data={map.mindElixirData} />

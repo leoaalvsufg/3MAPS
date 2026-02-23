@@ -1,6 +1,7 @@
 import '@xyflow/react/dist/style.css';
 import './mindmapFlow.css';
 
+import type { CSSProperties } from 'react';
 import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
@@ -20,7 +21,43 @@ import {
 } from '@xyflow/react';
 import { Plus, Trash2 } from 'lucide-react';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
+import { getColorsForLevel } from '@/lib/formatoThemes';
+import { FORMATO_PADRAO, type NodeShape, type LevelColors } from '@/types/formato';
 import type { MindElixirData, MindElixirNode } from '@/types/mindmap';
+
+function getNodeStyle(
+  shape: NodeShape,
+  colors: LevelColors,
+  level: number,
+  showDescription: boolean
+): CSSProperties {
+  const base: React.CSSProperties = {
+    color: colors.text,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+  };
+  const isRoot = level === 0;
+  switch (shape) {
+    case 'classic':
+      return { ...base, borderRadius: 6, borderWidth: 2, borderStyle: 'solid', padding: '12px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' };
+    case 'pill':
+      return { ...base, borderRadius: showDescription ? 20 : 50, borderWidth: 2, borderStyle: 'solid', padding: showDescription ? '12px 22px' : '10px 24px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' };
+    case 'glass':
+      return { ...base, borderRadius: 12, borderWidth: 1, borderStyle: 'solid', padding: '12px 18px', boxShadow: `0 4px 16px ${colors.border}33`, backdropFilter: 'blur(8px)' };
+    case 'neon':
+      return { color: colors.accent, backgroundColor: '#1a1a2e', borderColor: colors.accent, borderRadius: 8, borderWidth: 2, borderStyle: 'solid', padding: '12px 18px', boxShadow: `0 0 12px ${colors.accent}80, 0 0 4px ${colors.accent}4D` };
+    case 'flat':
+      return { ...base, borderRadius: 8, border: 'none', padding: '12px 18px', boxShadow: '0 2px 6px rgba(0,0,0,0.1)', backgroundColor: isRoot ? colors.accent : colors.bg, color: isRoot ? '#fff' : colors.text };
+    case 'outline':
+      return { ...base, borderRadius: 8, borderWidth: 2, borderStyle: 'solid', padding: '12px 18px', backgroundColor: isRoot ? `${colors.accent}10` : '#fff' };
+    case 'card':
+      return { ...base, borderRadius: 12, border: 'none', padding: '14px 20px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', backgroundColor: '#ffffff', borderLeft: `4px solid ${isRoot ? colors.accent : colors.border}` };
+    case 'tag':
+      return { ...base, borderRadius: 4, borderWidth: 1.5, borderStyle: 'solid', padding: '6px 14px', fontSize: '0.9em', letterSpacing: '0.3px' };
+    default:
+      return { ...base, borderRadius: 6, borderWidth: 2, borderStyle: 'solid', padding: '12px 18px' };
+  }
+}
 
 export interface MindMapCanvasHandle {
   fitView: () => void;
@@ -48,6 +85,8 @@ interface MindMapCanvasProps {
 	 * - false: show definitions only for the selected node
 	 */
 	detailsEnabled?: boolean;
+	/** Configuração visual (nodeShape, colorTheme, edgeType, layout). */
+	formato?: import('@/types/formato').FormatoConfig;
 }
 
 type MindmapActions = {
@@ -66,14 +105,21 @@ function useMindmapActions(): MindmapActions {
 
 type MindmapNodeData = {
   label: string;
-	definition?: string;
-	showDefinition?: boolean;
+  definition?: string;
+  showDefinition?: boolean;
+  level?: number;
+  nodeShape?: import('@/types/formato').NodeShape;
+  colorTheme?: import('@/types/formato').ColorTheme;
 };
 
 function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
   const { updateTopic, addChild, deleteNode } = useMindmapActions();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(data.label);
+  const level = data.level ?? 0;
+  const theme = data.colorTheme ?? 'oceano';
+  const shape = data.nodeShape ?? 'classic';
+  const colors = getColorsForLevel(theme, level);
 
   useEffect(() => {
     if (!isEditing) setDraft(data.label);
@@ -85,11 +131,18 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
     setIsEditing(false);
   };
 
+  const isRoot = id === 'root';
+  const showDef = isRoot ? false : (data.definition && data.showDefinition);
+  const nodeStyle = getNodeStyle(shape, colors, level, showDef);
+
   return (
     <div
       className="mindmap-node"
       data-selected={selected}
-      data-root={id === 'root'}
+      data-root={isRoot}
+      data-shape={shape}
+      data-theme={theme}
+      style={nodeStyle}
       onDoubleClick={() => setIsEditing(true)}
     >
       {/* Handles for left/right connections */}
@@ -203,9 +256,22 @@ function nextChildTopic(parent: MindElixirNode): string {
   return `Novo tópico ${n}`;
 }
 
+const EDGE_TYPE_MAP: Record<import('@/types/formato').EdgeType, string> = {
+  bezier: 'default',
+  'smooth-step': 'smoothstep',
+  straight: 'straight',
+  organic: 'smoothstep',
+  angular: 'step',
+  elbow: 'step',
+};
+
 function buildLayout(
   root: MindElixirNode,
-  opts?: { showAllDetails?: boolean; selectedId?: string | null }
+  opts?: {
+    showAllDetails?: boolean;
+    selectedId?: string | null;
+    formato?: import('@/types/formato').FormatoConfig;
+  }
 ): { nodes: Node<MindmapNodeData>[]; edges: Edge[] } {
   const X_SPACING = 280;
   const Y_SPACING = 84;
@@ -215,6 +281,7 @@ function buildLayout(
 
   const showAll = opts?.showAllDetails ?? true;
   const selId = opts?.selectedId ?? null;
+  const formato = opts?.formato ?? FORMATO_PADRAO;
 
   const safeRoot = deepCloneNode(root);
   const heights = new Map<string, number>();
@@ -244,16 +311,22 @@ function buildLayout(
   const nodes: Node<MindmapNodeData>[] = [];
   const edges: Edge[] = [];
 
-  const addNode = (n: MindElixirNode, x: number, y: number) => {
+  const addNode = (n: MindElixirNode, x: number, y: number, level: number) => {
     nodes.push({
       id: n.id,
       type: 'mindmapNode',
       position: { x, y },
-		      data: { label: n.topic, definition: n.definition || undefined },
+      data: {
+        label: n.topic,
+        definition: n.definition || undefined,
+        level,
+        nodeShape: formato.nodeShape,
+        colorTheme: formato.colorTheme,
+      },
     });
   };
 
-  addNode(safeRoot, 0, 0);
+  addNode(safeRoot, 0, 0, 0);
 
   const leftChildren = (safeRoot.children ?? []).filter((c) => (c.direction ?? RIGHT) === LEFT);
   const rightChildren = (safeRoot.children ?? []).filter((c) => (c.direction ?? RIGHT) === RIGHT);
@@ -264,12 +337,14 @@ function buildLayout(
   const leftTotal = totalHeight(leftChildren);
   const rightTotal = totalHeight(rightChildren);
 
+  const edgeType = EDGE_TYPE_MAP[formato.edgeType] ?? 'default';
+
   const layoutSubtree = (parent: MindElixirNode, n: MindElixirNode, depth: number, yTopUnits: number, side: typeof LEFT | typeof RIGHT) => {
     const h = heights.get(n.id) ?? 1;
     const yCenterUnits = yTopUnits + h / 2;
     const x = (side === RIGHT ? 1 : -1) * depth * X_SPACING;
     const y = yCenterUnits * Y_SPACING;
-    addNode(n, x, y);
+    addNode(n, x, y, depth);
 
     const sourceHandle = side === RIGHT ? 'r' : 'l';
     const targetHandle = side === RIGHT ? 'tl' : 'tr';
@@ -278,7 +353,7 @@ function buildLayout(
       id: `${parent.id}->${n.id}`,
       source: parent.id,
       target: n.id,
-      type: 'smoothstep',
+      type: edgeType as 'default' | 'smoothstep' | 'straight' | 'step',
       sourceHandle,
       targetHandle,
     });
@@ -309,7 +384,7 @@ function buildLayout(
   return { nodes, edges };
 }
 
-export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>(function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled }, ref) {
+export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>(function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled, formato: formatoProp }, ref) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
@@ -324,10 +399,11 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
 	}, [onSelectionChange, selectedId]);
 
 	const showAllDetails = detailsEnabled ?? true;
+	const formato = formatoProp ?? FORMATO_PADRAO;
 
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
-    return buildLayout(safeData.nodeData, { showAllDetails, selectedId });
-  }, [safeData, showAllDetails, selectedId]);
+    return buildLayout(safeData.nodeData, { showAllDetails, selectedId, formato });
+  }, [safeData, showAllDetails, selectedId, formato]);
   const nodes = useMemo(() => {
 		return layoutNodes.map((n) => {
 			const isSelected = selectedId === n.id;
@@ -342,18 +418,26 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
 		});
 	}, [layoutNodes, selectedId, showAllDetails]);
   const edges = useMemo(() => {
+    const targetLevels = new Map<string, number>();
+    for (const n of layoutNodes) {
+      const d = n.data as MindmapNodeData;
+      if (d.level != null) targetLevels.set(n.id, d.level);
+    }
+    const theme = formato.colorTheme;
     return layoutEdges.map((e) => {
       const isConnected = selectedId ? e.source === selectedId || e.target === selectedId : false;
+      const targetLevel = targetLevels.get(e.target) ?? 0;
+      const colors = getColorsForLevel(theme, targetLevel);
       return {
         ...e,
         animated: isConnected,
         style: {
-          stroke: isConnected ? 'var(--mm-edge-selected)' : 'var(--mm-edge)',
-          strokeWidth: isConnected ? 2.2 : 1.6,
+          stroke: isConnected ? colors.accent : colors.border,
+          strokeWidth: isConnected ? 2.2 : targetLevel === 0 ? 2 : 1.6,
         },
       };
     });
-  }, [layoutEdges, selectedId]);
+  }, [layoutEdges, layoutNodes, selectedId, formato.colorTheme]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {

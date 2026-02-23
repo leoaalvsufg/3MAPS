@@ -87,6 +87,8 @@ export interface MermaidDiagram {
 	code: string;
 }
 
+import type { FormatoConfig } from './formato';
+
 export interface SavedMap {
   id: string;
   title: string;
@@ -113,8 +115,10 @@ export interface SavedMap {
 	sources?: DeepThoughtSource[];
 	/** Optional: mermaid diagram suggested/produced by the LLM. */
 	mermaid?: MermaidDiagram;
-	/** UI-only flag persisted per map: controls whether node definitions/details are shown globally or only for the selected node. */
+  /** UI-only flag persisted per map: controls whether node definitions/details are shown globally or only for the selected node. */
 	detailsEnabled?: boolean;
+	/** Configuração visual do mapa mental (nodeShape, colorTheme, edgeType, layout). Apenas quando graphType === 'mindmap'. */
+	formato?: FormatoConfig;
 	/** ISO timestamp of when this map was last successfully synced to the server. */
 	lastSyncedAt?: string;
 }

@@ -11,6 +11,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { GraphType } from '@/types/mindmap';
+import type { FormatoConfig } from '@/types/formato';
+import { FormatoDropdown } from './FormatoDropdown';
 
 import './postGenActions.css';
 
@@ -28,6 +30,8 @@ interface PostGenActionsProps {
   onGraphTypeChange: (type: GraphType) => void;
 	detailsEnabled?: boolean;
 	onDetailsEnabledChange?: (enabled: boolean) => void;
+	formato?: FormatoConfig;
+	onFormatoChange?: (formato: FormatoConfig) => void;
   isLoading?: boolean;
 	activeAction?: PostGenAction;
 }
@@ -44,6 +48,8 @@ export function PostGenActions({
   onGraphTypeChange,
 	detailsEnabled,
 	onDetailsEnabledChange,
+	formato,
+	onFormatoChange,
   isLoading,
 	activeAction,
 }: PostGenActionsProps) {
@@ -89,7 +95,12 @@ export function PostGenActions({
         </DropdownMenuContent>
       </DropdownMenu>
 
-				{/* Details toggle (mindmap only) */}
+				{/* Formato (mindmap only) */}
+				{graphType === 'mindmap' && formato && onFormatoChange && (
+					<FormatoDropdown value={formato} onChange={onFormatoChange} />
+				)}
+
+				{/* Modo Compacto/Detalhado (mindmap only) */}
 				{graphType === 'mindmap' && typeof detailsEnabled === 'boolean' && onDetailsEnabledChange && (
 					<Button
 						variant={detailsEnabled ? 'secondary' : 'outline'}
@@ -97,10 +108,10 @@ export function PostGenActions({
 						onClick={() => onDetailsEnabledChange(!detailsEnabled)}
 						className="gap-1.5 text-xs h-8"
 						aria-pressed={detailsEnabled}
-						title="Ativar/desativar exibição de definições/detalhes (não reprocessa o LLM)"
+						title="Modo Compacto (só título) ou Detalhado (título + descrição)"
 					>
 						<BookOpen className="h-3.5 w-3.5" />
-						Ativar detalhes: {detailsEnabled ? 'ligado' : 'desligado'}
+						Modo: {detailsEnabled ? 'Detalhado' : 'Compacto'}
 					</Button>
 				)}
 
