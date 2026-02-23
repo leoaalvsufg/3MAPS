@@ -13,6 +13,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { generateMindMap } from '@/services/llm/generation';
 import type { ClarificationRequest, ClarificationResponse } from '@/services/llm/generation';
+import { extractWebContent } from '@/services/api/webExtractApi';
 import type { TemplateId } from '@/types/templates';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +46,32 @@ export function InputPanel() {
     }
   }, [generation.status, generation.error]);
 
+  /** Detecta se o primeiro token do input é uma URL e retorna { url, restante } ou null. */
+  const parseInputForUrl = (input: string): { url: string; restante: string } | null => {
+    const parts = input.trim().split(/\s+/);
+    if (parts.length === 0) return null;
+    let candidate = parts[0];
+    if (!candidate) return null;
+    if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
+      try {
+        new URL(candidate);
+        return { url: candidate, restante: parts.slice(1).join(' ').trim() };
+      } catch {
+        return null;
+      }
+    }
+    if (candidate.includes('.') && /^[a-zA-Z0-9][\w.-]*\.[a-zA-Z]{2,}(\/.*)?$/.test(candidate)) {
+      try {
+        const withScheme = candidate.startsWith('http') ? candidate : `https://${candidate}`;
+        new URL(withScheme);
+        return { url: withScheme, restante: parts.slice(1).join(' ').trim() };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+
   const handleGenerate = async () => {
     const trimmed = query.trim();
     if (!trimmed) {
@@ -71,7 +98,47 @@ export function InputPanel() {
 
     resetGeneration();
 
-		await generateMindMap(trimmed, selectedTemplate, generateImage, {
+    let effectiveQuery = trimmed;
+    let urlSource: { url: string; title: string; siteName?: string } | undefined;
+
+    const urlParse = parseInputForUrl(trimmed);
+    if (urlParse) {
+      setGenerationProgress(5, 'Extraindo conteúdo do link...');
+      try {
+        const extracted = await extractWebContent({
+          url: urlParse.url,
+          mode: 'readability',
+          maxChars: 25000,
+        });
+        const header = [
+          'Gere um mapa mental EXCLUSIVAMENTE a partir do conteúdo abaixo (extraído do link).',
+          `Link: ${extracted.finalUrl}`,
+          `Título: ${extracted.title}`,
+          `Site: ${extracted.siteName || extracted.finalUrl}`,
+          'Conteúdo:',
+          '<<<',
+          extracted.text,
+          '>>>',
+          'Se algo não estiver no conteúdo, responda "não consta no texto".',
+        ].join('\n');
+        effectiveQuery = urlParse.restante
+          ? `${header}\n\nPergunta-foco do usuário: ${urlParse.restante}`
+          : header;
+        urlSource = {
+          url: extracted.finalUrl,
+          title: extracted.title,
+          siteName: extracted.siteName || undefined,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setLocalError(msg);
+        setGenerationError(msg);
+        resetGeneration();
+        return;
+      }
+    }
+
+		await generateMindMap(effectiveQuery, selectedTemplate, generateImage, {
       onProgress: (progress, step) => setGenerationProgress(progress, step),
       onError: (err) => {
         setGenerationError(err);
@@ -87,7 +154,7 @@ export function InputPanel() {
 				});
 			},
       onComplete: (mapId) => navigate(`/map/${mapId}`),
-    });
+    }, urlSource);
   };
 
 	const closeClarify = (value: ClarificationResponse | null) => {
@@ -184,7 +251,7 @@ export function InputPanel() {
           value={query}
           onChange={(e) => { setQuery(e.target.value); setLocalError(''); }}
           onKeyDown={handleKeyDown}
-          placeholder="Digite sua pergunta ou tópico... (ex: Como funciona a inteligência artificial?)"
+          placeholder="Digite sua pergunta, tópico ou cole uma URL... (ex: https://exemplo.com/artigo)"
           className="min-h-[120px] resize-none text-base pr-4 pb-14"
           disabled={isGenerating}
           aria-label="Tópico ou pergunta para gerar mapa mental"

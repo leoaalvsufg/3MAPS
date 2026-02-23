@@ -38,6 +38,7 @@ export function MapPage() {
  const [activePostGenAction, setActivePostGenAction] = useState<
   'conciso' | 'detalhado' | 'traduzir' | 'regenerar' | null
  >(null);
+  const [postGenError, setPostGenError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(true);
   const [showChat, setShowChat] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -126,12 +127,17 @@ export function MapPage() {
 		// Hard guard to avoid duplicate clicks / double-requests while processing.
 		if (postGenInFlightRef.current) return;
 		postGenInFlightRef.current = true;
+		setPostGenError(null);
 		setActivePostGenAction(action);
     setIsLoading(true);
     try {
 			if (action === 'detalhado') {
 					const scopeStartId = selectedNodeId && selectedNodeId !== 'root' ? selectedNodeId : null;
 					const nodesForRefinement = buildNodesForDetailedRefinement(map.mindElixirData, scopeStartId);
+					if (nodesForRefinement.length === 0) {
+						setPostGenError('O mapa precisa ter pelo menos um nó (além do tema central) para usar Detalhado.');
+						return;
+					}
 					const scopeAllowedIds = (() => {
 						if (!scopeStartId) return undefined;
 						const root = map.mindElixirData?.nodeData as MindElixirNode | undefined;
@@ -149,7 +155,7 @@ export function MapPage() {
 					'refine_detailed',
 					[{ role: 'user', content: prompt }],
 					{
-						maxTokens: 4200,
+						maxTokens: 6000,
 						temperature: 0.35,
 					}
 				);
@@ -181,6 +187,8 @@ export function MapPage() {
 	    const newData = normalizeMindElixirData(parseJSON<MindElixirData>(result));
 	    updateMap(map.id, { mindElixirData: newData });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPostGenError(msg.length > 120 ? `${msg.slice(0, 120)}…` : msg);
       console.error('Post-gen action failed:', err);
     } finally {
       setIsLoading(false);
@@ -485,6 +493,7 @@ export function MapPage() {
 					onFormatoChange={(f) => updateMap(map.id, { formato: f })}
             isLoading={isLoading}
 				activeAction={activePostGenAction ?? undefined}
+				error={postGenError}
           />
         </div>
 

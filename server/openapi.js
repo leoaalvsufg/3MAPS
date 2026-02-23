@@ -12,7 +12,7 @@ export function getOpenApiSpec(baseUrl = '') {
     info: {
       title: '3Maps API',
       description: 'API do 3Maps — Gerador de mapas mentais com IA. Use JWT (login) ou token de API para autenticação.',
-      version: '0.1.4',
+      version: '0.1.5',
     },
     servers: [{ url: serverUrl }],
     security: [{ bearerAuth: [] }],
@@ -153,6 +153,56 @@ export function getOpenApiSpec(baseUrl = '') {
           responses: {
             200: { description: 'Mapa excluído' },
             404: { description: 'Mapa não encontrado' },
+          },
+        },
+      },
+      '/api/web/extract': {
+        post: {
+          summary: 'Extrair conteúdo de página web',
+          tags: ['Web'],
+          description: 'Usado pelo fluxo "colar URL" no campo de busca. Extrai texto limpo via Mozilla Readability. Requer autenticação. Bloqueia SSRF (localhost, IPs privados).',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['url'],
+                  properties: {
+                    url: { type: 'string', description: 'URL da página (http ou https)' },
+                    mode: { type: 'string', enum: ['readability'], default: 'readability' },
+                    maxChars: { type: 'integer', description: 'Limite de caracteres do texto extraído', default: 25000 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Conteúdo extraído',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      url: { type: 'string' },
+                      finalUrl: { type: 'string' },
+                      title: { type: 'string' },
+                      siteName: { type: 'string' },
+                      byline: { type: 'string' },
+                      excerpt: { type: 'string' },
+                      text: { type: 'string' },
+                      contentType: { type: 'string' },
+                      truncated: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'url ausente ou JSON inválido', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            401: { description: 'Não autenticado', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            422: { description: 'URL bloqueada (SSRF)', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            502: { description: 'Erro ao extrair (fetch/timeout)', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
         },
       },

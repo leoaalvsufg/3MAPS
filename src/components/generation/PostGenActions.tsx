@@ -34,6 +34,7 @@ interface PostGenActionsProps {
 	onFormatoChange?: (formato: FormatoConfig) => void;
   isLoading?: boolean;
 	activeAction?: PostGenAction;
+	error?: string | null;
 }
 
 export function PostGenActions({
@@ -52,6 +53,7 @@ export function PostGenActions({
 	onFormatoChange,
   isLoading,
 	activeAction,
+	error,
 }: PostGenActionsProps) {
   const GRAPH_TYPES: Array<{ id: GraphType; label: string }> = [
     { id: 'mindmap', label: 'Mindmap' },
@@ -238,6 +240,11 @@ export function PostGenActions({
 					<div className="mt-1 text-[11px] text-muted-foreground">
 						Processando “Detalhado”…
 					</div>
+				</div>
+			)}
+			{error && (
+				<div className="w-full pt-2 text-xs text-destructive" role="alert">
+					{error}
 				</div>
 			)}
     </div>

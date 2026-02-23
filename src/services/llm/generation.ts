@@ -63,11 +63,19 @@ export interface GenerationCallbacks {
 	onRequestClarification?: (req: ClarificationRequest) => Promise<ClarificationResponse | null>;
 }
 
+/** Opcional: fonte URL quando o mapa foi gerado a partir de colar link. */
+export interface UrlSource {
+  url: string;
+  title: string;
+  siteName?: string;
+}
+
 export async function generateMindMap(
   query: string,
   templateId: TemplateId,
   generateImage: boolean,
-  callbacks: GenerationCallbacks
+  callbacks: GenerationCallbacks,
+  urlSource?: UrlSource
 ): Promise<void> {
   const { onProgress, onError, onComplete } = callbacks;
   const settings = useSettingsStore.getState();
@@ -391,6 +399,17 @@ export async function generateMindMap(
     const now = new Date().toISOString();
     const mapId = uuidv4();
 
+    const mergedSources: DeepThoughtSource[] = [
+      ...(urlSource
+        ? [{
+            title: urlSource.title,
+            url: urlSource.url,
+            type: 'article' as const,
+            ...(urlSource.siteName ? { why: `Fonte: ${urlSource.siteName}` } : {}),
+          }]
+        : []),
+      ...(sources ?? []),
+    ];
     const savedMap: SavedMap = {
       id: mapId,
       title: analysis.central_theme,
@@ -400,7 +419,7 @@ export async function generateMindMap(
       mindElixirData,
 	      article: finalArticle,
       imageUrl,
-			sources,
+			sources: mergedSources.length ? mergedSources : undefined,
 			mermaid,
       tags: analysis.suggested_tags ?? [],
       createdAt: now,

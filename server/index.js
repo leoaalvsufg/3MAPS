@@ -33,6 +33,7 @@ import {
 import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
 import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
 import { searchAcademicPapers } from './academicSearch.js';
+import { extractWebContent } from './webExtract.js';
 import { getDb } from './db.js';
 import { getOpenApiSpec } from './openapi.js';
 
@@ -1271,6 +1272,34 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Web extract (colar URL -> extrair conteúdo)
+    // -----------------------------------------------------------------------
+    if (url.pathname === '/api/web/extract' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error ?? 'Invalid JSON' }, corsHeaders ?? {});
+      const { url: urlInput, mode, maxChars } = parsed.body ?? {};
+      if (!urlInput || typeof urlInput !== 'string') {
+        return await sendJson(res, 400, { error: 'url é obrigatório' }, corsHeaders ?? {});
+      }
+      try {
+        const result = await extractWebContent({
+          url: urlInput.trim(),
+          mode: mode ?? 'readability',
+          maxChars: typeof maxChars === 'number' ? maxChars : 25000,
+        });
+        return await sendJson(res, 200, result, corsHeaders ?? {});
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const status = msg.includes('bloqueado') || msg.includes('privado') ? 422 : 502;
+        return await sendJson(res, status, { error: msg }, corsHeaders ?? {});
       }
     }
 

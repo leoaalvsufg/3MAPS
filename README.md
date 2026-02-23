@@ -1,6 +1,8 @@
-# React + TypeScript + Vite
+# 3Maps — Gerador de Mapas Mentais com IA
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Colar URL no campo de busca
+
+É possível colar uma URL diretamente no campo de busca. O sistema detecta automaticamente que é um link, extrai o conteúdo da página no backend (via Mozilla Readability) e gera o mapa mental com base no texto. Você pode incluir uma pergunta após a URL (ex.: `https://exemplo.com/artigo Como resumir as ideias principais?`).
 
 Currently, two official plugins are available:
 
