@@ -1360,7 +1360,10 @@ const server = http.createServer(async (req, res) => {
         });
         return await sendJson(res, 200, { content }, corsHeaders ?? {});
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        let msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('401') && (msg.includes('Missing Authentication') || msg.includes('Invalid') || msg.toLowerCase().includes('authentication'))) {
+          msg = 'Chave de API LLM inválida ou não configurada. Verifique as chaves no painel Admin > Configurações > LLM e confirme que estão corretas e ativas.';
+        }
         return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
       }
     }

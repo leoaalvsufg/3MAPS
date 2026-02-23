@@ -19,6 +19,12 @@ function shouldFallback(err: unknown): boolean {
   const msg = String(err instanceof Error ? err.message : err).toLowerCase();
   return (
     msg.includes('429')
+    || msg.includes('401')
+    || msg.includes('missing authentication')
+    || msg.includes('invalid api key')
+    || msg.includes('401')
+    || msg.includes('missing authentication')
+    || msg.includes('invalid api key')
     || msg.includes(' 404')
     || msg.includes('not_found')
     || msg.includes('model is not found')
@@ -33,6 +39,14 @@ function shouldFallback(err: unknown): boolean {
     || msg.includes(' 503')
     || msg.includes(' 504')
   );
+}
+
+function sanitizeAuthError(err: unknown): string {
+  const msg = String(err instanceof Error ? err.message : String(err));
+  if (msg.includes('401') && (msg.toLowerCase().includes('missing authentication') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('authentication'))) {
+    return 'Chave de API inválida ou não configurada. Verifique as chaves LLM no painel administrativo (Admin > Configurações > LLM) e confirme que a chave está correta e ativa.';
+  }
+  return msg;
 }
 
 export async function callRoutedLLM(
@@ -65,7 +79,8 @@ export async function callRoutedLLM(
     }
   }
 
-  throw (lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Falha desconhecida da LLM')));
+  const finalMsg = sanitizeAuthError(lastError);
+  throw new Error(finalMsg);
 }
 
 export async function callRoutedLLMStream(
@@ -99,5 +114,6 @@ export async function callRoutedLLMStream(
     }
   }
 
-  throw (lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Falha desconhecida da LLM')));
+  const finalMsg = sanitizeAuthError(lastError);
+  throw new Error(finalMsg);
 }
