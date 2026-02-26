@@ -5,6 +5,7 @@ export interface AuthUser {
   plan?: string;
   email?: string | null;
   avatarUrl?: string | null;
+  extraCredits?: number;
 }
 
 export interface UserProfile {
@@ -12,6 +13,7 @@ export interface UserProfile {
   email: string | null;
   avatarUrl: string | null;
   plan: string;
+  extraCredits?: number;
 }
 
 export interface AuthResponse {
@@ -117,6 +119,7 @@ export async function verifyMagicLink(token: string): Promise<AuthResponse> {
 export async function getUserProfile(token: string): Promise<{ profile: UserProfile }> {
   const res = await fetch('/api/user/profile', {
     headers: { authorization: `Bearer ${token}` },
+    cache: 'no-store',
   });
   if (!res.ok) {
     const msg = await readErrorMessage(res);

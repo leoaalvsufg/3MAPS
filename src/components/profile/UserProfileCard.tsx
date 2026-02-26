@@ -2,7 +2,7 @@
  * UserProfileCard — perfil do usuário (avatar, email, senha, uso)
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Mail, Lock, Camera, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -49,32 +49,46 @@ export function UserProfileCard({ onLogout }: UserProfileCardProps) {
   const [avatarBlobUrl, setAvatarBlobUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const fetchProfile = useCallback(async () => {
+    if (!token || !user) return;
+    setLoading(true);
+    try {
+      const { profile: p } = await getUserProfile(token);
+      setProfile(p);
+      setEmail(p.email ?? '');
+      useAuthStore.setState((s) => ({
+        user: s.user ? { ...s.user, extraCredits: p.extraCredits ?? 0 } : s.user,
+      }));
+      if (p.avatarUrl && !p.avatarUrl.startsWith('http')) {
+        try {
+          const r = await fetch('/api/user/avatar', { headers: { authorization: `Bearer ${token}` } });
+          if (r.ok) {
+            const blob = await r.blob();
+            setAvatarBlobUrl(URL.createObjectURL(blob));
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, user]);
+
+  useEffect(() => {
+    void fetchProfile();
+  }, [fetchProfile]);
+
   useEffect(() => {
     if (!token || !user) return;
-    (async () => {
-      setLoading(true);
-      try {
-        const { profile: p } = await getUserProfile(token);
-        setProfile(p);
-        setEmail(p.email ?? '');
-        if (p.avatarUrl) {
-          try {
-            const r = await fetch('/api/user/avatar', { headers: { authorization: `Bearer ${token}` } });
-            if (r.ok) {
-              const blob = await r.blob();
-              setAvatarBlobUrl(URL.createObjectURL(blob));
-            }
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        setProfile(null);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [token, user?.username]);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void fetchProfile();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [token, user, fetchProfile]);
 
   useEffect(() => {
     void fetchUsage();
@@ -168,6 +182,11 @@ export function UserProfileCard({ onLogout }: UserProfileCardProps) {
   const mapsLabel = mapsLimit === -1 ? `${mapsUsed} este mês` : `${mapsUsed} / ${mapsLimit} mapas`;
   const advancedUsed = usage?.advancedCallsUsed ?? 0;
   const advancedLimit = limits?.advancedCallsLimit ?? 0;
+  const extraCredits = profile?.extraCredits ?? user?.extraCredits ?? 0;
+
+  const avatarSrc = (profile?.avatarUrl && profile.avatarUrl.startsWith('http'))
+    ? profile.avatarUrl
+    : avatarBlobUrl;
 
   return (
     <div className="flex flex-col gap-6">
@@ -175,8 +194,8 @@ export function UserProfileCard({ onLogout }: UserProfileCardProps) {
       <div className="flex items-center gap-4">
         <div className="relative">
           <div className="w-16 h-16 rounded-full overflow-hidden bg-indigo-100 flex items-center justify-center shrink-0">
-            {avatarBlobUrl ? (
-              <img src={avatarBlobUrl} alt="" className="w-full h-full object-cover" />
+            {avatarSrc ? (
+              <img src={avatarSrc} alt="" className="w-full h-full object-cover" />
             ) : (
               <span className="text-xl font-semibold text-indigo-600">{getInitials(user.username)}</span>
             )}
@@ -212,6 +231,9 @@ export function UserProfileCard({ onLogout }: UserProfileCardProps) {
             <span>
               Chamadas avançadas: {advancedUsed} / {advancedLimit}
             </span>
+          )}
+          {(limits?.id === 'premium' || limits?.id === 'enterprise' || limits?.id === 'admin' || user?.isAdmin) && (
+            <span>Créditos extras: {extraCredits}</span>
           )}
         </div>
       </div>

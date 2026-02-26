@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Image, AlertCircle, Loader2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -47,19 +47,36 @@ export function InputPanel() {
 
   const isGenerating = ['analyzing', 'generating', 'article', 'image'].includes(generation.status);
 
+  const fetchDeepCredits = useCallback(async () => {
+    if (!isPremiumOrAbove) return;
+    try {
+      const resp = await checkAction('deep_map');
+      setDeepCredits({
+        used: resp.advancedCallsUsed ?? 0,
+        limit: resp.advancedCallsLimit ?? 4,
+        extra: resp.extraCredits ?? user?.extraCredits ?? 0,
+      });
+    } catch {
+      // ignore
+    }
+  }, [isPremiumOrAbove, checkAction, user?.extraCredits]);
+
   useEffect(() => {
     if (!isPremiumOrAbove) {
       setDeepMode(false);
       return;
     }
-    checkAction('deep_map').then((resp) => {
-      setDeepCredits({
-        used: resp.advancedCallsUsed ?? 0,
-        limit: resp.advancedCallsLimit ?? 4,
-        extra: resp.extraCredits ?? 0,
-      });
-    }).catch(() => {});
-  }, [isPremiumOrAbove, checkAction]);
+    void fetchDeepCredits();
+  }, [isPremiumOrAbove, fetchDeepCredits]);
+
+  useEffect(() => {
+    if (!isPremiumOrAbove) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void fetchDeepCredits();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [isPremiumOrAbove, fetchDeepCredits]);
 
   useEffect(() => {
     if (generation.status === 'error') {
@@ -120,22 +137,18 @@ export function InputPanel() {
     // Deep mode: check + consume one credit upfront
     if (deepMode) {
       try {
-        const deepCheck = await checkAction('deep_map');
+        const deepCheck = await checkAction('deep_map', { templateId: selectedTemplate });
         if (!deepCheck.allowed) {
           setUpgradeMessage(deepCheck.reason ?? 'Sem créditos de mapa aprofundado disponíveis.');
           setShowUpgrade(true);
           return;
         }
-        const consumed = await consumeDeepCredit();
+        const consumed = await consumeDeepCredit(selectedTemplate);
         if (!consumed) {
           setLocalError('Não foi possível reservar o crédito de mapa aprofundado. Tente novamente.');
           return;
         }
-        setDeepCredits((prev) => prev ? {
-          ...prev,
-          used: prev.limit === -1 ? prev.used : prev.used + 1,
-          extra: prev.used >= prev.limit && prev.extra > 0 ? prev.extra - 1 : prev.extra,
-        } : prev);
+        void fetchDeepCredits();
       } catch {
         setLocalError('Erro ao verificar créditos. Tente novamente.');
         return;
@@ -333,12 +346,14 @@ export function InputPanel() {
                 <span className={cn('text-xs font-medium', deepMode ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
                   Aprofundado
                 </span>
-                {deepCredits && deepCredits.limit !== -1 && (
+                {deepCredits && (
                   <span className={cn(
                     'text-[10px] font-semibold rounded-full px-1.5 py-0.5 min-w-[20px] text-center',
                     deepMode ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-muted text-muted-foreground'
                   )}>
-                    {Math.max(0, deepCredits.limit - deepCredits.used) + deepCredits.extra}
+                    {deepCredits.limit === -1
+                      ? deepCredits.extra
+                      : Math.max(0, deepCredits.limit - deepCredits.used) + deepCredits.extra}
                   </span>
                 )}
               </label>

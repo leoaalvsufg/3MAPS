@@ -77,10 +77,12 @@ export async function verifyFirebaseIdToken(idToken) {
   try {
     const decoded = await admin.auth(_app).verifyIdToken(idToken);
     let name = decoded.name ?? decoded.email ?? null;
+    let picture = decoded.picture ?? null;
     if (!name && decoded.uid) {
       try {
         const userRecord = await admin.auth(_app).getUser(decoded.uid);
         name = userRecord.displayName ?? userRecord.email ?? null;
+        if (!picture && userRecord.photoURL) picture = userRecord.photoURL;
       } catch {
         // ignore; fallback to email/uid
       }
@@ -89,6 +91,7 @@ export async function verifyFirebaseIdToken(idToken) {
       uid: decoded.uid,
       email: decoded.email ?? null,
       name: name ?? decoded.email ?? decoded.uid,
+      picture: picture ?? null,
     };
   } catch (err) {
     console.error('[Firebase Admin] verifyIdToken failed', err?.message ?? err);

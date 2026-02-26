@@ -19,9 +19,11 @@
  *   PUT  /api/admin/settings           — update admin settings
  */
 
+import crypto from 'node:crypto';
 import { listUsers, getUser, updateUser, deleteUser, createUser } from './users.js';
 import { getUsage, resetMonthlyUsage, getGlobalStats } from './usage.js';
 import { getDataDir, listMaps } from './storage.js';
+import { sendWelcomeEmail } from './email.js';
 import {
   listActivityLogs,
   getActionTypes,
@@ -81,17 +83,41 @@ export async function handleListUsers(req, url) {
 }
 
 /**
+ * Generate a readable random password (12 chars).
+ */
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let s = '';
+  const bytes = crypto.randomBytes(12);
+  for (let i = 0; i < 12; i++) s += chars[bytes[i] % chars.length];
+  return s;
+}
+
+/**
  * POST /api/admin/users
- * Create a new user.
+ * Create a new user. If password is empty, generates one. If email provided, sends welcome email.
  */
 export async function handleCreateUser(body) {
-  const { username, password, plan = 'free', email = null, isAdmin = false } = body ?? {};
+  let { username, password, plan = 'free', email = null, isAdmin = false } = body ?? {};
+  email = (email && typeof email === 'string') ? email.trim().toLowerCase() || null : null;
 
-  if (!username || !password) {
-    throw new Error('Username e password são obrigatórios');
+  if (!username || typeof username !== 'string') {
+    throw new Error('Username é obrigatório');
+  }
+  username = username.trim();
+
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    password = generatePassword();
   }
 
   const result = await createUser(username, password, { plan, email, isAdmin });
+
+  if (email) {
+    sendWelcomeEmail({ to: email, username, password }).catch((err) => {
+      console.error('[Admin] Failed to send welcome email', err);
+    });
+  }
+
   return result;
 }
 
@@ -432,6 +458,8 @@ export async function handleUpdateSettings(body, adminUsername) {
     'plan_enterprise_name',
     'plan_enterprise_description',
     'plan_enterprise_price',
+    'extra_credits_premium',
+    'extra_credits_enterprise',
     'app_name',
     'app_url',
     'support_email',

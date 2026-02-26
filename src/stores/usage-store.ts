@@ -19,7 +19,7 @@ interface UsageActions {
     action: string,
     opts?: { mapId?: string; format?: string }
   ) => Promise<CheckActionResponse>;
-  consumeDeepCredit: () => Promise<boolean>;
+  consumeDeepCredit: (templateId?: string) => Promise<boolean>;
 }
 
 type UsageStore = UsageState & UsageActions;
@@ -51,11 +51,11 @@ export const useUsageStore = create<UsageStore>()((set) => ({
     }
   },
 
-  consumeDeepCredit: async () => {
+  consumeDeepCredit: async (templateId?: string) => {
     try {
       const { useAuthStore } = await import('@/stores/auth-store');
       const token = useAuthStore.getState().token ?? '';
-      await apiConsumeDeep(token);
+      await apiConsumeDeep(token, templateId);
       void useUsageStore.getState().fetchUsage();
       return true;
     } catch {

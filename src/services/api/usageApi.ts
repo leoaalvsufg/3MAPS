@@ -69,7 +69,7 @@ export async function getUsage(token: string): Promise<UsageResponse> {
 export async function checkAction(
   token: string,
   action: string,
-  opts?: { mapId?: string; format?: string }
+  opts?: { mapId?: string; format?: string; templateId?: string }
 ): Promise<CheckActionResponse> {
   return usageFetch<CheckActionResponse>('/api/usage/check', {
     method: 'POST',
@@ -78,19 +78,22 @@ export async function checkAction(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ action, ...opts }),
+    cache: 'no-store',
   });
 }
 
 /**
- * Consume one deep map credit (call ONCE before starting deep generation).
+ * Consume deep map credit(s) — 2 for pensamento_profundo/pesquisador_senior, 1 otherwise.
+ * Call ONCE before starting deep generation.
  */
-export async function consumeDeepCredit(token: string): Promise<ConsumeDeepResponse> {
+export async function consumeDeepCredit(token: string, templateId?: string): Promise<ConsumeDeepResponse> {
   return usageFetch<ConsumeDeepResponse>('/api/usage/consume-deep', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
-    body: '{}',
+    body: JSON.stringify({ templateId: templateId ?? null }),
+    cache: 'no-store',
   });
 }

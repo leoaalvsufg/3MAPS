@@ -660,12 +660,12 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   }), [instance, reorganize]);
 
   // Build a lightweight fingerprint of the layout so we can detect content changes
-  // (e.g. definitions added by "Detalhado") even when the node count stays the same.
+  // (e.g. definitions added by "Detalhado"). Icons excluded so adding an icon does not trigger zoom/fitView.
   const layoutFingerprint = useMemo(() => {
     return nodes
       .map((n) => {
         const d = n.data as MindmapNodeData;
-        return `${n.id}:${d?.label ?? ''}:${d?.definition ?? ''}:${(d?.icons ?? []).join(',')}`;
+        return `${n.id}:${d?.label ?? ''}:${d?.definition ?? ''}`;
       })
       .join('|');
   }, [nodes]);

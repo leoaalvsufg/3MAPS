@@ -42,6 +42,10 @@ export default defineConfig({
         target: 'http://localhost:8787',
         changeOrigin: true,
       },
+      '/api/user': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
       '/api/health': {
         target: 'http://localhost:8787',
         changeOrigin: true,

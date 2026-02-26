@@ -270,6 +270,16 @@ const MIGRATIONS = [
       db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT;`);
     },
   },
+  // Migration 0010 — backfill extra_credits for admin users who have 0
+  {
+    version: 10,
+    up: (db) => {
+      db.prepare(`
+        UPDATE users SET extra_credits = 10
+        WHERE is_admin = 1 AND (extra_credits IS NULL OR extra_credits = 0)
+      `).run();
+    },
+  },
 ];
 
 function runMigrations(db) {

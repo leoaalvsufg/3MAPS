@@ -10,14 +10,32 @@
  *   if (!checkRateLimit(req, res)) return; // response already sent
  */
 
-const MAX_REQUESTS = 100;       // requests allowed per window
+const MAX_REQUESTS = 2000;     // requests allowed per window (admin panel + normal use)
 const WINDOW_MS = 60 * 1000;   // 1 minute in milliseconds
+const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production';
 
 /**
  * Map of IP → array of request timestamps (ms) within the current window.
  * @type {Map<string, number[]>}
  */
 const requestLog = new Map();
+
+/**
+ * Checks if an IP is localhost (IPv4, IPv6, mapped IPv6, or hostname).
+ * Handles formats from Vite proxy and direct connections.
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isLocalhost(ip) {
+  if (!ip || ip === 'unknown') return false;
+  const normalized = String(ip).trim().replace(/^\[|\]$/g, '');
+  if (normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost') return true;
+  if (normalized.startsWith('::ffff:')) {
+    const v4 = normalized.slice(7);
+    return v4 === '127.0.0.1' || /^127\.\d+\.\d+\.\d+$/.test(v4);
+  }
+  return /^127\.\d+\.\d+\.\d+$/.test(normalized);
+}
 
 /**
  * Extracts the client IP from the request, respecting common proxy headers.
@@ -27,7 +45,6 @@ const requestLog = new Map();
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) {
-    // x-forwarded-for can be a comma-separated list; take the first entry.
     return String(forwarded).split(',')[0].trim();
   }
   return req.socket?.remoteAddress ?? 'unknown';
@@ -35,9 +52,7 @@ function getClientIp(req) {
 
 /**
  * Checks whether the request is within the rate limit for its IP.
- *
- * If the limit is exceeded, writes a 429 response and returns `false`.
- * Otherwise, records the request and returns `true`.
+ * Skips rate limiting for localhost and in development mode.
  *
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
@@ -45,6 +60,7 @@ function getClientIp(req) {
  */
 export function checkRateLimit(req, res) {
   const ip = getClientIp(req);
+  if (IS_DEVELOPMENT || isLocalhost(ip)) return true;
   const now = Date.now();
   const windowStart = now - WINDOW_MS;
 

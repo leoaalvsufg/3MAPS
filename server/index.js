@@ -732,7 +732,16 @@ const server = http.createServer(async (req, res) => {
         const user = await createUser(username, password);
         const token = await generateToken({ ...user, isAdmin: false });
         logActivity({ username, action: 'register', ip: req.socket?.remoteAddress });
-        return await sendJson(res, 201, { token, user }, corsHeaders ?? {});
+        const profile = await getUser(user.username);
+        return await sendJson(res, 201, {
+          token,
+          user: {
+            ...user,
+            isAdmin: false,
+            plan: profile?.plan ?? 'free',
+            extraCredits: profile?.extraCredits ?? 0,
+          },
+        }, corsHeaders ?? {});
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Registration failed';
         // "Username already taken" → 409 Conflict
@@ -761,8 +770,17 @@ const server = http.createServer(async (req, res) => {
 
       logActivity({ username: user.username, action: 'login', ip: req.socket?.remoteAddress });
       const token = await generateToken(user);
-      // Return user info including isAdmin flag (without exposing it in the token payload directly)
-      return await sendJson(res, 200, { token, user: { userId: user.userId, username: user.username, isAdmin: user.isAdmin } }, corsHeaders ?? {});
+      const profile = await getUser(user.username);
+      return await sendJson(res, 200, {
+        token,
+        user: {
+          userId: user.userId,
+          username: user.username,
+          isAdmin: user.isAdmin,
+          plan: profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free'),
+          extraCredits: profile?.extraCredits ?? 0,
+        },
+      }, corsHeaders ?? {});
     }
 
     // Firebase Auth — exchange Firebase ID token for app JWT
@@ -789,6 +807,7 @@ const server = http.createServer(async (req, res) => {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
           displayName: firebaseUser.name,
+          photoURL: firebaseUser.picture ?? null,
         });
         const profile = await getUser(username);
         const isAdmin = profile?.isAdmin ?? false;
@@ -796,7 +815,13 @@ const server = http.createServer(async (req, res) => {
         const token = await generateToken({ userId, username, isAdmin });
         return await sendJson(res, 200, {
           token,
-          user: { userId, username, isAdmin },
+          user: {
+            userId,
+            username,
+            isAdmin,
+            plan: profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free'),
+            extraCredits: profile?.extraCredits ?? 0,
+          },
         }, corsHeaders ?? {});
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
@@ -832,6 +857,8 @@ const server = http.createServer(async (req, res) => {
       } catch {
         // ignore
       }
+      const avatarUrl = freshUser?.avatarUrl ?? null;
+      const extraCredits = freshUser?.extraCredits ?? 0;
       return await sendJson(res, 200, {
         user: {
           userId: payload.userId,
@@ -839,7 +866,8 @@ const server = http.createServer(async (req, res) => {
           isAdmin: payload.isAdmin ?? false,
           plan: (freshUser?.isAdmin ? 'admin' : (freshUser?.plan ?? 'free')),
           email: freshUser?.email ?? null,
-          avatarUrl: freshUser?.avatarUrl ?? null,
+          avatarUrl,
+          extraCredits,
         },
       }, corsHeaders ?? {});
     }
@@ -855,12 +883,14 @@ const server = http.createServer(async (req, res) => {
       }
       const profile = await getUser(authUser.username);
       if (!profile) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
+      const profileHeaders = { ...(corsHeaders ?? {}), 'Cache-Control': 'no-store, no-cache, must-revalidate' };
       return await sendJson(res, 200, {
         username: profile.username,
         email: profile.email ?? null,
         avatarUrl: profile.avatarUrl ?? null,
         plan: profile.isAdmin ? 'admin' : profile.plan,
-      }, corsHeaders ?? {});
+        extraCredits: profile.extraCredits ?? 0,
+      }, profileHeaders);
     }
 
     if (url.pathname === '/api/user/profile' && req.method === 'PATCH') {
@@ -1572,7 +1602,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/usage/check' && req.method === 'POST') {
       const parsed = await readJsonBody(req);
       if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
-      const { action, mapId, format } = parsed.body ?? {};
+      const { action, mapId, format, templateId } = parsed.body ?? {};
 
       const authUser = await getAuthUser(req);
       if (authUser.username === 'local') {
@@ -1647,7 +1677,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (action === 'advanced_call' || action === 'deep_map') {
-        const advCheck = await canConsumeAdvancedCall(username, planId);
+        const creditsRequired = (action === 'deep_map' && ['pensamento_profundo', 'pesquisador_senior'].includes(templateId ?? '')) ? 2 : 1;
+        const advCheck = await canConsumeAdvancedCall(username, planId, creditsRequired);
         const profile = await getUser(username);
         return await sendJson(res, 200, {
           allowed: advCheck.allowed,
@@ -1661,12 +1692,15 @@ const server = http.createServer(async (req, res) => {
       return await sendJson(res, 400, { error: 'Unknown action' }, corsHeaders ?? {});
     }
 
-    // POST /api/usage/consume-deep — consume 1 deep credit (call once per deep generation)
+    // POST /api/usage/consume-deep — consume deep credit(s): 2 for pensamento_profundo/pesquisador_senior, 1 otherwise
     if (url.pathname === '/api/usage/consume-deep' && req.method === 'POST') {
       const authUser = await getAuthUser(req);
       if (authUser.username === 'local') {
         return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
       }
+      const parsed = await readJsonBody(req);
+      const templateId = (parsed.ok && parsed.body && typeof parsed.body.templateId === 'string') ? parsed.body.templateId : null;
+      const creditsToConsume = (templateId === 'pensamento_profundo' || templateId === 'pesquisador_senior') ? 2 : 1;
       const username = authUser.username;
       let planId = 'free';
       try {
@@ -1676,14 +1710,14 @@ const server = http.createServer(async (req, res) => {
         planId = 'free';
       }
 
-      const advCheck = await canConsumeAdvancedCall(username, planId);
+      const advCheck = await canConsumeAdvancedCall(username, planId, creditsToConsume);
       if (!advCheck.allowed) {
         return await sendJson(res, 403, {
           error: advCheck.reason ?? 'Sem créditos de mapa aprofundado disponíveis.',
         }, corsHeaders ?? {});
       }
 
-      await consumeAdvancedCall(username, planId);
+      await consumeAdvancedCall(username, planId, creditsToConsume);
 
       const usage = await getUsage(username);
       const profile = await getUser(username);

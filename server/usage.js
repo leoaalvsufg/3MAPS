@@ -6,6 +6,7 @@
  */
 
 import { getDb } from './db.js';
+import { getAdminSetting } from './activity.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,49 +157,48 @@ export async function resetMonthlyUsage(username) {
 }
 
 /**
- * Check if user can consume one advanced LLM call.
- * Free: allowed (limits enforced via usage/check). Premium: 4 included, then extraCredits. Enterprise/Admin: unlimited.
+ * Check if user can consume advanced LLM call(s).
+ * Free: allowed. Premium: 4 included, then extraCredits. Enterprise/Admin: unlimited.
  * @param {string} username
  * @param {'free'|'premium'|'enterprise'|'admin'} planId
+ * @param {number} [creditsRequired=1] — 2 for pensamento_profundo/pesquisador_senior
  * @returns {Promise<{ allowed: boolean, reason?: string }>}
  */
-export async function canConsumeAdvancedCall(username, planId) {
-  if (planId === 'free') {
-    return { allowed: true };
-  }
-  if (planId === 'enterprise' || planId === 'admin') {
-    return { allowed: true };
-  }
-  // premium: 4 included, then extraCredits
+export async function canConsumeAdvancedCall(username, planId, creditsRequired = 1) {
+  if (planId === 'free') return { allowed: true };
+  if (planId === 'enterprise' || planId === 'admin') return { allowed: true };
+
   const db = getDb();
   const month = currentMonthKey();
   ensureUsageRow(username, month);
 
   const usageRow = db.prepare('SELECT advanced_calls_used FROM usage WHERE username = ? AND month = ?').get(username, month);
   const advancedUsed = usageRow?.advanced_calls_used ?? 0;
+  const includedRemaining = Math.max(0, PREMIUM_ADVANCED_CALLS_LIMIT - advancedUsed);
+  const fromExtra = Math.max(0, creditsRequired - includedRemaining);
 
-  if (advancedUsed < PREMIUM_ADVANCED_CALLS_LIMIT) {
-    return { allowed: true };
-  }
+  if (fromExtra === 0) return { allowed: true };
 
   const userRow = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
-  const extraCredits = userRow?.extra_credits ?? 0;
-  if (extraCredits > 0) {
-    return { allowed: true };
-  }
+  const baseCredits = userRow?.extra_credits ?? 0;
+  const planDefault = Number(getAdminSetting('extra_credits_premium', 0)) || 0;
+  const extraCredits = baseCredits + planDefault;
+  if (extraCredits >= fromExtra) return { allowed: true };
+
   return {
     allowed: false,
-    reason: `Limite de ${PREMIUM_ADVANCED_CALLS_LIMIT} chamadas avançadas atingido. Solicite créditos extras ao administrador.`,
+    reason: `Créditos insuficientes. São necessários ${creditsRequired} crédito(s) para este template. Solicite créditos extras ao administrador.`,
   };
 }
 
 /**
- * Consume one advanced call: either increment advanced_calls_used (if under limit) or decrement extra_credits.
+ * Consume advanced call(s): use included first, then extra_credits.
  * Only for premium; free/enterprise/admin are no-ops.
  * @param {string} username
  * @param {'free'|'premium'|'enterprise'|'admin'} planId
+ * @param {number} [creditsToConsume=1] — 2 for pensamento_profundo/pesquisador_senior
  */
-export async function consumeAdvancedCall(username, planId) {
+export async function consumeAdvancedCall(username, planId, creditsToConsume = 1) {
   if (planId === 'free' || planId === 'enterprise' || planId === 'admin') return;
 
   const db = getDb();
@@ -207,19 +207,24 @@ export async function consumeAdvancedCall(username, planId) {
 
   const usageRow = db.prepare('SELECT advanced_calls_used FROM usage WHERE username = ? AND month = ?').get(username, month);
   const advancedUsed = usageRow?.advanced_calls_used ?? 0;
+  const includedRemaining = Math.max(0, PREMIUM_ADVANCED_CALLS_LIMIT - advancedUsed);
+  const fromIncluded = Math.min(creditsToConsume, includedRemaining);
+  const fromExtra = creditsToConsume - fromIncluded;
 
-  if (advancedUsed < PREMIUM_ADVANCED_CALLS_LIMIT) {
+  if (fromIncluded > 0) {
     db.prepare(`
-      UPDATE usage SET advanced_calls_used = advanced_calls_used + 1, updated_at = datetime('now')
+      UPDATE usage SET advanced_calls_used = advanced_calls_used + ?, updated_at = datetime('now')
       WHERE username = ? AND month = ?
-    `).run(username, month);
-    return;
+    `).run(fromIncluded, username, month);
   }
-
-  db.prepare(`
-    UPDATE users SET extra_credits = MAX(0, extra_credits - 1), updated_at = datetime('now')
-    WHERE username = ?
-  `).run(username);
+  if (fromExtra > 0) {
+    const planDefault = Number(getAdminSetting('extra_credits_premium', 0)) || 0;
+    const minAllowed = -Math.max(0, planDefault);
+    db.prepare(`
+      UPDATE users SET extra_credits = MAX(?, extra_credits - ?), updated_at = datetime('now')
+      WHERE username = ?
+    `).run(minAllowed, fromExtra, username);
+  }
 }
 
 /**

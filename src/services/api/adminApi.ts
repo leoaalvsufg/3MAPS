@@ -174,7 +174,7 @@ export async function listAdminUsers(params?: {
 
 export async function createAdminUser(data: {
   username: string;
-  password: string;
+  password?: string;
   plan?: string;
   email?: string | null;
   isAdmin?: boolean;

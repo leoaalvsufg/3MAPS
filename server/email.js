@@ -293,3 +293,95 @@ Equipe 3Maps
 
   return sendEmail({ to, subject: '🔗 Entrar no 3Maps sem senha', html, text });
 }
+
+// ---------------------------------------------------------------------------
+// Welcome email (admin creates user)
+// ---------------------------------------------------------------------------
+
+/**
+ * Send welcome email when admin creates a new user.
+ * @param {{ to: string, username: string, password: string }} options
+ * @returns {Promise<boolean>}
+ */
+export async function sendWelcomeEmail({ to, username, password }) {
+  const authUrl = `${APP_URL}/auth`;
+  const text = `
+Olá!
+
+Sua conta no 3Maps foi criada pelo administrador.
+
+Acesso:
+  Usuário: ${username}
+  Senha temporária: ${password}
+
+Entrar em: ${authUrl}
+
+Você pode:
+- Usar a senha acima para entrar e alterá-la em Meu Perfil
+- Criar uma nova senha ao primeiro acesso
+- Vincular login com Google (se já tiver conta com este e-mail)
+
+Atenciosamente,
+Equipe 3Maps
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bem-vindo ao 3Maps</title>
+</head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);overflow:hidden;">
+          <tr>
+            <td style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:32px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">🧠 3Maps</h1>
+              <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Gerador de mapas mentais com IA</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="margin:0 0 16px;color:#1e293b;font-size:20px;font-weight:700;">Sua conta foi criada</h2>
+              <p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">
+                O administrador criou sua conta no 3Maps.
+              </p>
+              <div style="background:#f1f5f9;border-radius:8px;padding:16px;margin:20px 0;">
+                <p style="margin:0 0 4px;color:#64748b;font-size:12px;">Usuário</p>
+                <p style="margin:0;font-size:16px;font-weight:600;font-family:monospace;">${username}</p>
+                <p style="margin:12px 0 4px;color:#64748b;font-size:12px;">Senha temporária</p>
+                <p style="margin:0;font-size:16px;font-weight:600;font-family:monospace;">${password}</p>
+              </div>
+              <div style="text-align:center;margin:24px 0;">
+                <a href="${authUrl}"
+                   style="display:inline-block;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:600;">
+                  Entrar no 3Maps
+                </a>
+              </div>
+              <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.6;">
+                Você pode usar a senha acima ou alterá-la em <strong>Meu Perfil</strong> após o login.
+                Também pode vincular sua conta ao <strong>Google</strong> se usar este e-mail.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f8fafc;padding:20px 40px;text-align:center;border-top:1px solid #e2e8f0;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;">
+                3Maps © ${new Date().getFullYear()}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`.trim();
+
+  return sendEmail({ to, subject: '🔑 Sua conta 3Maps foi criada', html, text });
+}

@@ -163,7 +163,7 @@ function useToast() {
 interface EditUserDialogProps {
   user: AdminUser | null;
   onClose: () => void;
-  onSave: (username: string, updates: Partial<AdminUser & { password: string; addExtraCredits?: number }>) => Promise<void>;
+  onSave: (username: string, updates: Partial<AdminUser & { password: string; extraCredits?: number; addExtraCredits?: number }>) => Promise<void>;
 }
 
 function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
@@ -172,6 +172,7 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
   const [isAdmin, setIsAdmin] = useState(user?.isAdmin ?? false);
   const [email, setEmail] = useState(user?.email ?? '');
   const [password, setPassword] = useState('');
+  const [extraCredits, setExtraCredits] = useState('');
   const [addExtraCredits, setAddExtraCredits] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -183,6 +184,7 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
       setIsAdmin(user.isAdmin);
       setEmail(user.email ?? '');
       setPassword('');
+      setExtraCredits(String(user?.extraCredits ?? ''));
       setAddExtraCredits('');
       setError(null);
     }
@@ -193,10 +195,14 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
     setLoading(true);
     setError(null);
     try {
-      const updates: Partial<AdminUser & { password: string; addExtraCredits?: number }> = { plan, isActive, isAdmin, email: email || null };
+      const updates: Partial<AdminUser & { password: string; extraCredits?: number; addExtraCredits?: number }> = { plan, isActive, isAdmin, email: email || null };
       if (password) updates.password = password;
-      const n = parseInt(addExtraCredits, 10);
-      if (Number.isFinite(n) && n > 0) updates.addExtraCredits = n;
+      const setVal = parseInt(extraCredits, 10);
+      if (extraCredits !== '' && Number.isFinite(setVal) && setVal >= 0) updates.extraCredits = setVal;
+      else {
+        const addVal = parseInt(addExtraCredits, 10);
+        if (Number.isFinite(addVal) && addVal > 0) updates.addExtraCredits = addVal;
+      }
       await onSave(user.username, updates);
       onClose();
     } catch (err) {
@@ -234,21 +240,31 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
             <label className="text-sm font-medium text-slate-700">Nova senha (deixe em branco para manter)</label>
             <Input type="password" placeholder="••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          {(plan === 'premium' || user?.extraCredits !== undefined) && (
+          {(plan === 'premium' || plan === 'enterprise' || plan === 'admin') && (
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-slate-700">Créditos extras (Premium)</label>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-500">
-                  Atuais: {(user?.extraCredits ?? 0)}
-                </span>
-                <Input
-                  type="number"
-                  min={0}
-                  placeholder="Adicionar quantidade"
-                  value={addExtraCredits}
-                  onChange={(e) => setAddExtraCredits(e.target.value)}
-                  className="w-32"
-                />
+              <label className="text-sm font-medium text-slate-700">Créditos extras</label>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-slate-500 shrink-0">Atuais: {(user?.extraCredits ?? 0)}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Definir valor exato (ex: 15)"
+                    value={extraCredits}
+                    onChange={(e) => { setExtraCredits(e.target.value); if (e.target.value !== '') setAddExtraCredits(''); }}
+                    className="w-40"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Ou adicionar à quantidade atual"
+                    value={addExtraCredits}
+                    onChange={(e) => { setAddExtraCredits(e.target.value); if (e.target.value !== '') setExtraCredits(''); }}
+                    className="w-40"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -302,7 +318,7 @@ function CreateUserDialog({ open, onClose, onCreate }: CreateUserDialogProps) {
   async function handleCreate() {
     setError(null);
     if (!username.trim()) { setError('Nome de usuário é obrigatório'); return; }
-    if (!password) { setError('Senha é obrigatória'); return; }
+    if (password && password.length < 6) { setError('Senha deve ter no mínimo 6 caracteres'); return; }
     setLoading(true);
     try {
       await onCreate({ username: username.trim(), password, plan, email: email.trim(), isAdmin });
@@ -331,13 +347,14 @@ function CreateUserDialog({ open, onClose, onCreate }: CreateUserDialogProps) {
             <p className="text-xs text-slate-400">3–30 caracteres: letras, números, hífens ou underscores.</p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-slate-700">Senha *</label>
-            <Input type="password" placeholder="••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <p className="text-xs text-slate-400">Mínimo de 6 caracteres.</p>
+            <label className="text-sm font-medium text-slate-700">Senha</label>
+            <Input type="password" placeholder="Deixe em branco para gerar automaticamente" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <p className="text-xs text-slate-400">Mínimo 6 caracteres. Se vazio, uma senha será gerada e enviada por e-mail.</p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-slate-700">E-mail (opcional)</label>
+            <label className="text-sm font-medium text-slate-700">E-mail</label>
             <Input type="email" placeholder="usuario@exemplo.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <p className="text-xs text-slate-400">Se informado, o usuário receberá as credenciais e poderá usar a senha gerada ou criar uma nova. Também pode vincular ao Google.</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-700">Plano</label>
@@ -1728,6 +1745,25 @@ function PaymentsTab() {
               <Input placeholder={placeholder} value={s(key)} onChange={(e) => update(key, e.target.value)} />
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Créditos extras padrão por plano */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex flex-col gap-2 mb-4">
+          <Info className="w-5 h-5 text-indigo-600" />
+          <h3 className="text-sm font-semibold text-slate-700">Créditos extras padrão</h3>
+          <p className="text-xs text-slate-500">Valor exibido e disponível para usuários Premium/Enterprise quando não possuem créditos no perfil.</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-slate-700">Premium</label>
+            <Input type="number" min={0} placeholder="Ex: 15" value={s('extra_credits_premium')} onChange={(e) => update('extra_credits_premium', e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-slate-700">Enterprise</label>
+            <Input type="number" min={0} placeholder="Ex: 50" value={s('extra_credits_enterprise')} onChange={(e) => update('extra_credits_enterprise', e.target.value)} />
+          </div>
         </div>
       </div>
 

@@ -27,9 +27,9 @@ export function ReleaseNotesPage() {
 
         {/* Release notes list */}
         <div className="space-y-6">
-          {RELEASE_NOTES.map((release) => (
+          {RELEASE_NOTES.map((release, i) => (
             <article
-              key={release.version}
+              key={`${release.version}-${release.title}-${i}`}
               className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
             >
               <div className="flex items-center justify-between gap-2 mb-3">

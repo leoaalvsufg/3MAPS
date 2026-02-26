@@ -102,12 +102,13 @@ export async function createUser(username, password, options = {}) {
   const plan = options.plan ?? 'free';
   const email = options.email ?? null;
   const isAdmin = options.isAdmin ? 1 : 0;
+  const initialCredits = (plan === 'premium' || plan === 'enterprise' || plan === 'admin') ? 10 : 4;
 
   const db = getDb();
   db.prepare(`
-    INSERT INTO users (id, username, password_hash, plan, email, is_admin)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(userId, username, passwordHash, plan, email, isAdmin);
+    INSERT INTO users (id, username, password_hash, plan, email, is_admin, extra_credits)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, username, passwordHash, plan, email, isAdmin, initialCredits);
 
   return { userId, username };
 }
@@ -155,15 +156,20 @@ export async function getUserByFirebaseUid(firebaseUid) {
 
 /**
  * Create or get user from Firebase Auth (email/Google). Links by firebase_uid or creates new.
- * @param {{ uid: string, email?: string | null, displayName?: string | null }} firebaseUser
+ * Saves photoURL to avatar_url when from social login.
+ * @param {{ uid: string, email?: string | null, displayName?: string | null, photoURL?: string | null }} firebaseUser
  * @returns {Promise<{ userId: string, username: string }>}
  */
 export async function getOrCreateUserFromFirebase(firebaseUser) {
-  const { uid, email, displayName } = firebaseUser;
+  const { uid, email, displayName, photoURL } = firebaseUser;
   if (!uid) throw new Error('Firebase UID is required');
 
   const existing = await getUserByFirebaseUid(uid);
   if (existing) {
+    if (photoURL && !existing.avatarUrl) {
+      const db = getDb();
+      db.prepare('UPDATE users SET avatar_url = ?, updated_at = datetime(\'now\') WHERE username = ?').run(photoURL, existing.username);
+    }
     return { userId: existing.userId, username: existing.username };
   }
 
@@ -172,7 +178,14 @@ export async function getOrCreateUserFromFirebase(firebaseUser) {
     const db = getDb();
     const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
     if (byEmail) {
-      db.prepare('UPDATE users SET firebase_uid = ?, updated_at = datetime(\'now\') WHERE id = ?').run(uid, byEmail.id);
+      const updates = ['firebase_uid = ?', "updated_at = datetime('now')"];
+      const values = [uid];
+      if (photoURL && !byEmail.avatar_url) {
+        updates.push('avatar_url = ?');
+        values.push(photoURL);
+      }
+      values.push(byEmail.id);
+      db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
       return { userId: byEmail.id, username: byEmail.username };
     }
   }
@@ -180,10 +193,11 @@ export async function getOrCreateUserFromFirebase(firebaseUser) {
   const username = await uniqueUsernameFromEmail(normalizedEmail || displayName || uid);
   const userId = crypto.randomUUID();
   const db = getDb();
+  const initialCredits = 4; // free plan default
   db.prepare(`
-    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid)
-    VALUES (?, ?, ?, ?, ?, 0, ?)
-  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid);
+    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid, avatar_url, extra_credits)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid, photoURL || null, initialCredits);
   return { userId, username };
 }
 

@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth-store';
 // Route-level code splitting — keep HomePage eager (landing page)
 const MapPage = lazy(() => import('@/pages/MapPage').then((m) => ({ default: m.MapPage })));
 const AllMapsPage = lazy(() => import('@/pages/AllMapsPage').then((m) => ({ default: m.AllMapsPage })));
-const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 const TagsPage = lazy(() => import('@/pages/TagsPage').then((m) => ({ default: m.TagsPage })));
 const AuthPage = lazy(() => import('@/pages/AuthPage').then((m) => ({ default: m.AuthPage })));
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((m) => ({ default: m.AdminPage })));
@@ -92,13 +92,14 @@ function App() {
             }
           />
           <Route
-            path="/settings"
+            path="/profile"
             element={
               <Suspense fallback={<PageLoader />}>
-                <SettingsPage />
+                <ProfilePage />
               </Suspense>
             }
           />
+          <Route path="/settings" element={<Navigate to="/profile" replace />} />
           <Route
             path="/release-notes"
             element={
