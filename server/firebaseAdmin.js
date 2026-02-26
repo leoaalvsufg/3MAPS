@@ -3,19 +3,30 @@
  *
  * Firebase Admin SDK — verify ID tokens from Firebase Auth (client).
  * Configure via FIREBASE_SERVICE_ACCOUNT_PATH (path to JSON key file).
+ * Default: server/firebase-service-account.json (relativo ao diretório deste arquivo).
  */
 
 import admin from 'firebase-admin';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 let _app = null;
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 function getServiceAccountPath() {
   const env = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-  if (env) return path.resolve(env);
-  const relative = path.join(process.cwd(), 'server', 'firebase-service-account.json');
-  if (fs.existsSync(relative)) return relative;
+  if (env) {
+    const resolved = path.resolve(env);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  // 1) Relativo ao diretório deste arquivo (server/)
+  const scriptDir = path.join(__dirname, 'firebase-service-account.json');
+  if (fs.existsSync(scriptDir)) return scriptDir;
+  // 2) process.cwd()/server/
+  const cwdPath = path.join(process.cwd(), 'server', 'firebase-service-account.json');
+  if (fs.existsSync(cwdPath)) return cwdPath;
   return null;
 }
 
@@ -30,7 +41,15 @@ export function initFirebaseAdmin() {
   try {
     const keyContent = fs.readFileSync(keyPath, 'utf8');
     const keyJson = JSON.parse(keyContent);
-    _app = admin.initializeApp({ credential: admin.credential.cert(keyJson) }, 'mindmap');
+    try {
+      _app = admin.initializeApp({ credential: admin.credential.cert(keyJson) }, 'mindmap');
+    } catch (dup) {
+      if (dup?.code === 'app/duplicate-app') {
+        _app = admin.app('mindmap');
+      } else {
+        throw dup;
+      }
+    }
     return true;
   } catch (err) {
     console.error('[Firebase Admin] init failed', err);
@@ -49,6 +68,7 @@ export function getFirestore() {
 
 /**
  * Verify a Firebase ID token and return decoded claims.
+ * Uses getUser(uid) to fetch display name when not in token (DecodedIdToken does not include name).
  * @param {string} idToken
  * @returns {Promise<{ uid: string, email?: string, name?: string } | null>}
  */
@@ -56,12 +76,22 @@ export async function verifyFirebaseIdToken(idToken) {
   if (!initFirebaseAdmin()) return null;
   try {
     const decoded = await admin.auth(_app).verifyIdToken(idToken);
+    let name = decoded.name ?? decoded.email ?? null;
+    if (!name && decoded.uid) {
+      try {
+        const userRecord = await admin.auth(_app).getUser(decoded.uid);
+        name = userRecord.displayName ?? userRecord.email ?? null;
+      } catch {
+        // ignore; fallback to email/uid
+      }
+    }
     return {
       uid: decoded.uid,
       email: decoded.email ?? null,
-      name: decoded.name ?? decoded.email ?? null,
+      name: name ?? decoded.email ?? decoded.uid,
     };
-  } catch {
+  } catch (err) {
+    console.error('[Firebase Admin] verifyIdToken failed', err?.message ?? err);
     return null;
   }
 }

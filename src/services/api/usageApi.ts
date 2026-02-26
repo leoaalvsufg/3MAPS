@@ -9,6 +9,7 @@ export interface UsageData {
   monthKey: string;
   totalMapsCreated: number;
   chatMessagesSent: Record<string, number>;
+  advancedCallsUsed?: number;
 }
 
 export interface UsageResponse {
@@ -20,6 +21,16 @@ export interface CheckActionResponse {
   allowed: boolean;
   reason?: string;
   remaining?: number;
+  advancedCallsUsed?: number;
+  advancedCallsLimit?: number;
+  extraCredits?: number;
+}
+
+export interface ConsumeDeepResponse {
+  ok: boolean;
+  advancedCallsUsed: number;
+  advancedCallsLimit: number;
+  extraCredits: number;
 }
 
 async function usageFetch<T>(url: string, init: RequestInit): Promise<T> {
@@ -67,5 +78,19 @@ export async function checkAction(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ action, ...opts }),
+  });
+}
+
+/**
+ * Consume one deep map credit (call ONCE before starting deep generation).
+ */
+export async function consumeDeepCredit(token: string): Promise<ConsumeDeepResponse> {
+  return usageFetch<ConsumeDeepResponse>('/api/usage/consume-deep', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: '{}',
   });
 }

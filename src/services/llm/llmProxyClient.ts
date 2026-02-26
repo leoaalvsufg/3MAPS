@@ -16,6 +16,7 @@ export interface LlmProxyOptions {
   temperature?: number;
   maxTokens?: number;
   stream?: boolean;
+  deepMode?: boolean;
 }
 
 function getAuthToken(): string {
@@ -74,6 +75,7 @@ export async function callServerLlm(
       temperature: options.temperature ?? 0.7,
       maxTokens: options.maxTokens ?? 4096,
       stream: false,
+      deepMode: options.deepMode ?? false,
     }),
   });
 

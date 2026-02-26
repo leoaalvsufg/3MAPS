@@ -9,9 +9,9 @@ import crypto from 'node:crypto';
 import { deleteMap, getMap, listMaps, putMap, validateMapId, validateUsername, getDataDir } from './storage.js';
 import { checkRateLimit } from './rateLimit.js';
 import { generateToken, verifyToken, verifyApiToken } from './auth.js';
-import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers } from './users.js';
-import { verifyFirebaseIdToken } from './firebaseAdmin.js';
-import { getUsage, incrementMapCount, incrementChatCount } from './usage.js';
+import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser, changePassword } from './users.js';
+import { verifyFirebaseIdToken, initFirebaseAdmin } from './firebaseAdmin.js';
+import { getUsage, incrementMapCount, incrementChatCount, canConsumeAdvancedCall, consumeAdvancedCall } from './usage.js';
 import { logger } from './logger.js';
 import { scheduleBackups, runBackup } from './backup.js';
 import { sendPasswordResetEmail, sendMagicLinkEmail } from './email.js';
@@ -31,7 +31,7 @@ import {
   handleUpdateSettings,
 } from './admin.js';
 import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
-import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
+import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits, getDeepModel } from './llmProxy.js';
 import { searchAcademicPapers } from './academicSearch.js';
 import { extractWebContent } from './webExtract.js';
 import { getDb } from './db.js';
@@ -774,6 +774,12 @@ const server = http.createServer(async (req, res) => {
       if (!idToken || typeof idToken !== 'string') {
         return await sendJson(res, 400, { error: 'idToken é obrigatório' }, corsHeaders ?? {});
       }
+      if (!initFirebaseAdmin()) {
+        logger.warn('Firebase login attempted but Firebase Admin not configured');
+        return await sendJson(res, 503, {
+          error: 'Login social não está configurado. O administrador deve configurar o Firebase (firebase-service-account.json ou FIREBASE_SERVICE_ACCOUNT_PATH).',
+        }, corsHeaders ?? {});
+      }
       const firebaseUser = await verifyFirebaseIdToken(idToken);
       if (!firebaseUser) {
         return await sendJson(res, 401, { error: 'Token inválido ou expirado' }, corsHeaders ?? {});
@@ -793,8 +799,19 @@ const server = http.createServer(async (req, res) => {
           user: { userId, username, isAdmin },
         }, corsHeaders ?? {});
       } catch (e) {
-        logger.error('Firebase auth error', { error: String(e) });
-        return await sendJson(res, 500, { error: 'Erro ao criar sessão' }, corsHeaders ?? {});
+        const err = e instanceof Error ? e : new Error(String(e));
+        logger.error('Firebase auth error', {
+          message: err.message,
+          stack: err.stack,
+          uid: firebaseUser?.uid,
+          hint: 'Verifique se as migrações do banco (firebase_uid, etc.) foram aplicadas.',
+        });
+        const isDbError = err.message?.includes('SQLITE') || err.message?.includes('no such column') || err.message?.includes('FOREIGN KEY');
+        return await sendJson(res, 500, {
+          error: isDbError
+            ? 'Erro de configuração do banco. Execute as migrações e reinicie o servidor.'
+            : 'Erro ao criar sessão. Tente novamente ou use login com usuário e senha.',
+        }, corsHeaders ?? {});
       }
     }
 
@@ -821,8 +838,137 @@ const server = http.createServer(async (req, res) => {
           username: payload.username,
           isAdmin: payload.isAdmin ?? false,
           plan: (freshUser?.isAdmin ? 'admin' : (freshUser?.plan ?? 'free')),
+          email: freshUser?.email ?? null,
+          avatarUrl: freshUser?.avatarUrl ?? null,
         },
       }, corsHeaders ?? {});
+    }
+
+    // -----------------------------------------------------------------------
+    // User profile — authenticated user routes
+    // -----------------------------------------------------------------------
+
+    if (url.pathname === '/api/user/profile' && req.method === 'GET') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const profile = await getUser(authUser.username);
+      if (!profile) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
+      return await sendJson(res, 200, {
+        username: profile.username,
+        email: profile.email ?? null,
+        avatarUrl: profile.avatarUrl ?? null,
+        plan: profile.isAdmin ? 'admin' : profile.plan,
+      }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/user/profile' && req.method === 'PATCH') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { email } = parsed.body ?? {};
+      const updates = {};
+      if (email !== undefined) updates.email = email === null || email === '' ? null : String(email).trim();
+      const updated = await updateUser(authUser.username, updates);
+      if (!updated) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
+      return await sendJson(res, 200, {
+        username: updated.username,
+        email: updated.email ?? null,
+        avatarUrl: updated.avatarUrl ?? null,
+      }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/user/change-password' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { currentPassword, newPassword } = parsed.body ?? {};
+      if (!currentPassword || !newPassword) {
+        return await sendJson(res, 400, { error: 'currentPassword e newPassword são obrigatórios' }, corsHeaders ?? {});
+      }
+      try {
+        await changePassword(authUser.username, currentPassword, newPassword);
+        return await sendJson(res, 200, { message: 'Senha alterada com sucesso' }, corsHeaders ?? {});
+      } catch (e) {
+        return await sendJson(res, 400, { error: e instanceof Error ? e.message : 'Erro ao alterar senha' }, corsHeaders ?? {});
+      }
+    }
+
+    if (url.pathname === '/api/user/avatar' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { avatar } = parsed.body ?? {};
+      if (!avatar || typeof avatar !== 'string') {
+        return await sendJson(res, 400, { error: 'avatar (base64 data URL) é obrigatório' }, corsHeaders ?? {});
+      }
+      const match = avatar.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
+      if (!match) {
+        return await sendJson(res, 400, { error: 'Formato inválido. Use data:image/png;base64,...' }, corsHeaders ?? {});
+      }
+      const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      const buf = Buffer.from(match[2], 'base64');
+      if (buf.length > 500 * 1024) {
+        return await sendJson(res, 400, { error: 'Imagem muito grande (máx 500KB)' }, corsHeaders ?? {});
+      }
+      try {
+        const dataDir = getDataDir();
+        const userDir = path.join(dataDir, 'users', authUser.username);
+        await fs.mkdir(userDir, { recursive: true });
+        const avatarPath = path.join(userDir, `avatar.${ext}`);
+        await fs.writeFile(avatarPath, buf);
+        const avatarUrl = `/api/user/avatar`;
+        await updateUser(authUser.username, { avatarUrl });
+        return await sendJson(res, 200, { avatarUrl }, corsHeaders ?? {});
+      } catch (e) {
+        return await sendJson(res, 500, { error: e instanceof Error ? e.message : 'Erro ao salvar avatar' }, corsHeaders ?? {});
+      }
+    }
+
+    if (url.pathname === '/api/user/avatar' && req.method === 'GET') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const profile = await getUser(authUser.username);
+      if (!profile?.avatarUrl) {
+        return await sendJson(res, 404, { error: 'Avatar não configurado' }, corsHeaders ?? {});
+      }
+      try {
+        const dataDir = getDataDir();
+        const userDir = path.join(dataDir, 'users', authUser.username);
+        const candidates = ['avatar.png', 'avatar.jpg', 'avatar.jpeg', 'avatar.webp', 'avatar.gif'];
+        let found = null;
+        for (const f of candidates) {
+          const p = path.join(userDir, f);
+          try {
+            await fs.access(p);
+            found = p;
+            break;
+          } catch {
+            // continue
+          }
+        }
+        if (!found) return await sendJson(res, 404, { error: 'Arquivo de avatar não encontrado' }, corsHeaders ?? {});
+        const raw = await fs.readFile(found);
+        const ext = path.extname(found).slice(1);
+        const ct = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[ext] ?? 'image/png';
+        res.writeHead(200, { 'content-type': ct, 'cache-control': 'private, max-age=3600' });
+        res.end(raw);
+        return;
+      } catch (e) {
+        return await sendJson(res, 500, { error: e instanceof Error ? e.message : 'Erro ao ler avatar' }, corsHeaders ?? {});
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -977,7 +1123,10 @@ const server = http.createServer(async (req, res) => {
           message: 'Se este e-mail ou usuário existir, você receberá o link em breve. Verifique sua caixa de entrada e spam.',
         }, corsHeaders ?? {});
       } catch (err) {
-        logger.error('Magic link request error', { error: String(err) });
+        logger.error('Magic link request error', {
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         return await sendJson(res, 500, { error: 'Erro ao enviar o link. Tente novamente.' }, corsHeaders ?? {});
       }
     }
@@ -1031,7 +1180,10 @@ const server = http.createServer(async (req, res) => {
           },
         }, corsHeaders ?? {});
       } catch (err) {
-        logger.error('Magic link verify error', { error: String(err) });
+        logger.error('Magic link verify error', {
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         return await sendJson(res, 500, { error: 'Erro ao validar o link. Tente novamente.' }, corsHeaders ?? {});
       }
     }
@@ -1323,12 +1475,16 @@ const server = http.createServer(async (req, res) => {
           error: 'Configure as chaves de API no painel administrativo antes de usar a geração de mapas.',
         }, corsHeaders ?? {});
       }
+
       const parsed = await readJsonBody(req);
       if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error ?? 'Invalid JSON' }, corsHeaders ?? {});
-      const { provider, model, messages, temperature, maxTokens, stream } = parsed.body ?? {};
+      const { provider, model, messages, temperature, maxTokens, stream, deepMode } = parsed.body ?? {};
       if (!provider || !model || !Array.isArray(messages)) {
         return await sendJson(res, 400, { error: 'provider, model e messages são obrigatórios' }, corsHeaders ?? {});
       }
+
+      const effectiveModel = deepMode ? (getDeepModel(provider) ?? model) : model;
+
       try {
         if (stream === true) {
           res.writeHead(200, {
@@ -1340,7 +1496,7 @@ const server = http.createServer(async (req, res) => {
           });
           for await (const chunk of proxyLlmStream({
             provider,
-            model,
+            model: effectiveModel,
             messages,
             temperature: temperature ?? 0.7,
             maxTokens: maxTokens ?? 4096,
@@ -1353,7 +1509,7 @@ const server = http.createServer(async (req, res) => {
         }
         const content = await proxyLlmComplete({
           provider,
-          model,
+          model: effectiveModel,
           messages,
           temperature: temperature ?? 0.7,
           maxTokens: maxTokens ?? 4096,
@@ -1490,7 +1646,53 @@ const server = http.createServer(async (req, res) => {
         }, corsHeaders ?? {});
       }
 
+      if (action === 'advanced_call' || action === 'deep_map') {
+        const advCheck = await canConsumeAdvancedCall(username, planId);
+        const profile = await getUser(username);
+        return await sendJson(res, 200, {
+          allowed: advCheck.allowed,
+          reason: advCheck.reason,
+          advancedCallsUsed: usage.advancedCallsUsed ?? 0,
+          advancedCallsLimit: planId === 'premium' ? 4 : -1,
+          extraCredits: profile?.extraCredits ?? 0,
+        }, corsHeaders ?? {});
+      }
+
       return await sendJson(res, 400, { error: 'Unknown action' }, corsHeaders ?? {});
+    }
+
+    // POST /api/usage/consume-deep — consume 1 deep credit (call once per deep generation)
+    if (url.pathname === '/api/usage/consume-deep' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const username = authUser.username;
+      let planId = 'free';
+      try {
+        const profile = await getUser(username);
+        planId = profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free');
+      } catch {
+        planId = 'free';
+      }
+
+      const advCheck = await canConsumeAdvancedCall(username, planId);
+      if (!advCheck.allowed) {
+        return await sendJson(res, 403, {
+          error: advCheck.reason ?? 'Sem créditos de mapa aprofundado disponíveis.',
+        }, corsHeaders ?? {});
+      }
+
+      await consumeAdvancedCall(username, planId);
+
+      const usage = await getUsage(username);
+      const profile = await getUser(username);
+      return await sendJson(res, 200, {
+        ok: true,
+        advancedCallsUsed: usage.advancedCallsUsed ?? 0,
+        advancedCallsLimit: planId === 'premium' ? 4 : -1,
+        extraCredits: profile?.extraCredits ?? 0,
+      }, corsHeaders ?? {});
     }
 
     // -----------------------------------------------------------------------

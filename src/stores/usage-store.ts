@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { PlanLimits } from '@/lib/plans';
-import { getUsage as apiGetUsage, checkAction as apiCheckAction } from '@/services/api/usageApi';
+import { getUsage as apiGetUsage, checkAction as apiCheckAction, consumeDeepCredit as apiConsumeDeep } from '@/services/api/usageApi';
 import type { UsageData, CheckActionResponse } from '@/services/api/usageApi';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +19,7 @@ interface UsageActions {
     action: string,
     opts?: { mapId?: string; format?: string }
   ) => Promise<CheckActionResponse>;
+  consumeDeepCredit: () => Promise<boolean>;
 }
 
 type UsageStore = UsageState & UsageActions;
@@ -31,13 +32,11 @@ export const useUsageStore = create<UsageStore>()((set) => ({
   fetchUsage: async () => {
     set({ loading: true });
     try {
-      // Lazily import auth store to avoid circular deps
       const { useAuthStore } = await import('@/stores/auth-store');
       const token = useAuthStore.getState().token ?? '';
       const { usage, limits } = await apiGetUsage(token);
       set({ usage, limits, loading: false });
     } catch {
-      // Silently fail — usage data is non-critical
       set({ loading: false });
     }
   },
@@ -48,8 +47,19 @@ export const useUsageStore = create<UsageStore>()((set) => ({
       const token = useAuthStore.getState().token ?? '';
       return await apiCheckAction(token, action, opts);
     } catch {
-      // On network error, allow the action (fail open)
       return { allowed: true };
+    }
+  },
+
+  consumeDeepCredit: async () => {
+    try {
+      const { useAuthStore } = await import('@/stores/auth-store');
+      const token = useAuthStore.getState().token ?? '';
+      await apiConsumeDeep(token);
+      void useUsageStore.getState().fetchUsage();
+      return true;
+    } catch {
+      return false;
     }
   },
 }));

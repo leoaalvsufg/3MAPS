@@ -29,18 +29,32 @@ Retorne APENAS o texto refinado, sem prefixos como "Tópico refinado:" ou "Refor
 export function getAnalysisPrompt(
 	topic: string,
 	templateId: TemplateId,
-	extraContext?: string
+	extraContext?: string,
+	deepMode?: boolean
 ): string {
   const template = TEMPLATES.find((t) => t.id === templateId);
   const modifier = template?.promptModifier ?? '';
 	const ctx = (extraContext ?? '').trim();
+
+  const depth = deepMode ? 5 : 3;
+  const nodeCount = deepMode ? 50 : 25;
+  const subtopicCount = deepMode ? '10–15' : '5–8';
+  const deepInstructions = deepMode
+    ? `\nMODO APROFUNDADO ativado. Você DEVE:
+- Extrair ${subtopicCount} subtópicos principais (não menos que 10)
+- Identificar 15–25 conceitos-chave com inter-relações
+- Mapear pelo menos 10 relações significativas entre conceitos
+- Buscar profundidade real: causas, efeitos, evidências, contra-argumentos, nuances
+- Incluir perspectivas múltiplas e análise crítica
+- Nível de profundidade: acadêmico/profissional\n`
+    : '';
 
   return `Você é um especialista em análise conceptual e criação de mapas mentais.
 ${EVALUATE_QUESTION_INSTRUCTION}
 
 TÓPICO: ${topic}
 ORIENTAÇÃO DO TEMPLATE: ${modifier}
-
+${deepInstructions}
 ${ctx ? `CONTEXTO ADICIONAL (referência; não copie literalmente):\n${ctx}\n` : ''}
 
 Faça uma análise profunda e estruturada. Extraia conceitos, relações e hierarquia. Evite listas genéricas ou tom superficial.
@@ -50,14 +64,23 @@ Retorne APENAS o JSON válido, sem markdown, sem explicações, sem blocos de c�
   "subtopics": ["string"],
   "key_concepts": ["string"],
   "relationships": [{"from": "string", "to": "string", "type": "string"}],
-  "depth_level": 3,
-  "suggested_node_count": 25,
+  "depth_level": ${depth},
+  "suggested_node_count": ${nodeCount},
   "suggested_tags": ["string"],
   "template_context": "${templateId}"
 }`;
 }
 
-export function getMindMapPrompt(analysis: AnalysisResult): string {
+export function getMindMapPrompt(analysis: AnalysisResult, deepMode?: boolean): string {
+  const nodeCount = deepMode ? Math.max(analysis.suggested_node_count, 50) : analysis.suggested_node_count;
+  const depthLevel = deepMode ? Math.max(analysis.depth_level, 5) : analysis.depth_level;
+  const subNodesPerBranch = deepMode ? '4–8' : '2–5';
+  const deepRules = deepMode
+    ? `\n7. MODO APROFUNDADO: cada ramo principal DEVE ter no mínimo 4 sub-nós, e sub-nós importantes devem ter filhos próprios.
+8. Inclua exemplos concretos, autores/referências e dados quando relevante.
+9. Explore nuances, controvérsias e perspectivas alternativas em sub-nós dedicados.`
+    : '';
+
   return `Você é um especialista em mapas mentais hierárquicos e estruturação conceptual.
 ${EVALUATE_QUESTION_INSTRUCTION}
 
@@ -66,8 +89,8 @@ Com base na análise abaixo, crie um mapa mental: direto, sem redundância, com 
 TEMA CENTRAL: ${analysis.central_theme}
 SUBTÓPICOS: ${analysis.subtopics.join(', ')}
 CONCEITOS-CHAVE: ${analysis.key_concepts.join(', ')}
-PROFUNDIDADE: ${analysis.depth_level} níveis
-NÚMERO DE NÓS: aproximadamente ${analysis.suggested_node_count}
+PROFUNDIDADE: ${depthLevel} níveis
+NÚMERO DE NÓS: aproximadamente ${nodeCount}
 
 Retorne APENAS o JSON válido. Sem markdown, sem blocos de código, sem texto antes ou depois.
 
@@ -107,17 +130,28 @@ Regras:
 2. Cada nó: "id" (único, formato "node_N" ou "node_N_N") e "topic" (curto, máx 50 caracteres, conceitual).
 3. Raiz: id "root".
 4. Nós folha: omita a chave "children".
-5. ${analysis.subtopics.length} ramos principais (um por subtópico); 2–5 sub-nós por ramo com conteúdo relevante.
-6. Português brasileiro. Nenhum campo extra (direction, theme, style, linkData, arrows).`;
+5. ${analysis.subtopics.length} ramos principais (um por subtópico); ${subNodesPerBranch} sub-nós por ramo com conteúdo relevante.
+6. Português brasileiro. Nenhum campo extra (direction, theme, style, linkData, arrows).${deepRules}`;
 }
 
-export function getArticlePrompt(analysis: AnalysisResult): string {
+export function getArticlePrompt(analysis: AnalysisResult, deepMode?: boolean): string {
+  const wordMin = deepMode ? 1500 : 800;
+  const deepInstructions = deepMode
+    ? `\nMODO APROFUNDADO: exija de si mesmo profundidade real:
+- Mínimo ${wordMin} palavras
+- Cada subtópico deve ter pelo menos 2–3 parágrafos substanciais
+- Inclua exemplos concretos, dados, referências e contra-argumentos
+- Explore nuances e perspectivas múltiplas
+- Adicione uma seção "Análise Crítica" antes do resumo final
+- Use subseções ### para conceitos-chave dentro de cada ## subtópico\n`
+    : '';
+
   return `Você é um autor de conteúdo técnico e didático.
 ${EVALUATE_QUESTION_INSTRUCTION}
 
 Com base na análise abaixo, escreva um artigo em português brasileiro: direto, estruturado, sem redundância e sem tom jornalístico.
 Evite frases de efeito, introduções longas e conclusões genéricas. Priorize clareza e densidade de informação.
-
+${deepInstructions}
 ANÁLISE: ${JSON.stringify(analysis, null, 2)}
 
 Formatação (obrigatório):
@@ -131,7 +165,7 @@ Formatação (obrigatório):
 3) Marcadores opcionais (✅ ⚠️ 📌 🔹) de forma consistente.
 4) NÃO inclua imagens nem URLs de imagem.
 
-Conteúdo: informativo, preciso, mínimo ~800 palavras. Sem filler nem frases decorativas.`;
+Conteúdo: informativo, preciso, mínimo ~${wordMin} palavras. Sem filler nem frases decorativas.`;
 }
 
 export function getChatSystemPrompt(

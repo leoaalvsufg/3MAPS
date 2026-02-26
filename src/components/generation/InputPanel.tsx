@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Image, AlertCircle, Loader2 } from 'lucide-react';
+import { Sparkles, Image, AlertCircle, Loader2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { UpgradePrompt } from '@/components/monetization/UpgradePrompt';
 import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUsageStore } from '@/stores/usage-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { generateMindMap } from '@/services/llm/generation';
 import type { ClarificationRequest, ClarificationResponse } from '@/services/llm/generation';
 import { extractWebContent } from '@/services/api/webExtractApi';
@@ -22,6 +23,8 @@ export function InputPanel() {
   const [query, setQuery] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('padrao');
   const [generateImage, setGenerateImage] = useState(false);
+  const [deepMode, setDeepMode] = useState(false);
+  const [deepCredits, setDeepCredits] = useState<{ used: number; limit: number; extra: number } | null>(null);
   const [localError, setLocalError] = useState('');
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [upgradeMessage, setUpgradeMessage] = useState('');
@@ -37,8 +40,26 @@ export function InputPanel() {
   const resetGeneration = useMapsStore((s) => s.resetGeneration);
   const hasAnyApiKey = useSettingsStore((s) => s.hasAnyApiKey);
   const checkAction = useUsageStore((s) => s.checkAction);
+  const consumeDeepCredit = useUsageStore((s) => s.consumeDeepCredit);
+
+  const user = useAuthStore((s) => s.user);
+  const isPremiumOrAbove = user?.plan === 'premium' || user?.plan === 'enterprise' || user?.isAdmin;
 
   const isGenerating = ['analyzing', 'generating', 'article', 'image'].includes(generation.status);
+
+  useEffect(() => {
+    if (!isPremiumOrAbove) {
+      setDeepMode(false);
+      return;
+    }
+    checkAction('deep_map').then((resp) => {
+      setDeepCredits({
+        used: resp.advancedCallsUsed ?? 0,
+        limit: resp.advancedCallsLimit ?? 4,
+        extra: resp.extraCredits ?? 0,
+      });
+    }).catch(() => {});
+  }, [isPremiumOrAbove, checkAction]);
 
   useEffect(() => {
     if (generation.status === 'error') {
@@ -96,6 +117,31 @@ export function InputPanel() {
       // Fail open — allow generation if usage check fails
     }
 
+    // Deep mode: check + consume one credit upfront
+    if (deepMode) {
+      try {
+        const deepCheck = await checkAction('deep_map');
+        if (!deepCheck.allowed) {
+          setUpgradeMessage(deepCheck.reason ?? 'Sem créditos de mapa aprofundado disponíveis.');
+          setShowUpgrade(true);
+          return;
+        }
+        const consumed = await consumeDeepCredit();
+        if (!consumed) {
+          setLocalError('Não foi possível reservar o crédito de mapa aprofundado. Tente novamente.');
+          return;
+        }
+        setDeepCredits((prev) => prev ? {
+          ...prev,
+          used: prev.limit === -1 ? prev.used : prev.used + 1,
+          extra: prev.used >= prev.limit && prev.extra > 0 ? prev.extra - 1 : prev.extra,
+        } : prev);
+      } catch {
+        setLocalError('Erro ao verificar créditos. Tente novamente.');
+        return;
+      }
+    }
+
     resetGeneration();
 
     let effectiveQuery = trimmed;
@@ -145,7 +191,6 @@ export function InputPanel() {
         setLocalError(err);
       },
 			onRequestClarification: async (req) => {
-				// Open a dialog and await answers.
 				setClarifyReq(req);
 				setClarifyAnswers(req.questions.map(() => ''));
 				setClarifyOpen(true);
@@ -154,7 +199,7 @@ export function InputPanel() {
 				});
 			},
       onComplete: (mapId) => navigate(`/map/${mapId}`),
-    }, urlSource);
+    }, urlSource, deepMode);
   };
 
 	const closeClarify = (value: ClarificationResponse | null) => {
@@ -257,26 +302,58 @@ export function InputPanel() {
           aria-label="Tópico ou pergunta para gerar mapa mental"
           aria-describedby="map-query-helper"
         />
-        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={generateImage}
-              onChange={(e) => setGenerateImage(e.target.checked)}
-              className="rounded"
-              disabled={isGenerating}
-            />
-            <Image className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Gerar imagem ilustrativa</span>
-          </label>
+        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={generateImage}
+                onChange={(e) => setGenerateImage(e.target.checked)}
+                className="rounded"
+                disabled={isGenerating}
+              />
+              <Image className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Imagem</span>
+            </label>
+            {isPremiumOrAbove && (
+              <label className={cn(
+                'flex items-center gap-2 cursor-pointer select-none rounded-full px-2.5 py-1 transition-colors',
+                deepMode
+                  ? 'bg-amber-500/15 ring-1 ring-amber-500/40'
+                  : 'hover:bg-muted/50'
+              )}>
+                <input
+                  type="checkbox"
+                  checked={deepMode}
+                  onChange={(e) => setDeepMode(e.target.checked)}
+                  className="sr-only"
+                  disabled={isGenerating}
+                />
+                <Zap className={cn('h-3.5 w-3.5', deepMode ? 'text-amber-500' : 'text-muted-foreground')} />
+                <span className={cn('text-xs font-medium', deepMode ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
+                  Aprofundado
+                </span>
+                {deepCredits && deepCredits.limit !== -1 && (
+                  <span className={cn(
+                    'text-[10px] font-semibold rounded-full px-1.5 py-0.5 min-w-[20px] text-center',
+                    deepMode ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-muted text-muted-foreground'
+                  )}>
+                    {Math.max(0, deepCredits.limit - deepCredits.used) + deepCredits.extra}
+                  </span>
+                )}
+              </label>
+            )}
+          </div>
           <Button
             onClick={handleGenerate}
             disabled={isGenerating || !query.trim()}
             size="sm"
-            className="gap-2"
+            className={cn('gap-2', deepMode && 'bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700')}
           >
             {isGenerating ? (
               <><Loader2 className="h-4 w-4 animate-spin" /> Gerando...</>
+            ) : deepMode ? (
+              <><Zap className="h-4 w-4" /> Gerar Aprofundado</>
             ) : (
               <><Sparkles className="h-4 w-4" /> Gerar Mapa</>
             )}

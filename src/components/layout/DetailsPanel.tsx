@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Tag, Plus, X, FileText, Image as ImageIcon, BookOpen, Code, Pencil, Check } from 'lucide-react';
+import { IconSelector } from '@/components/nodes/IconSelector';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,6 +24,7 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled }: DetailsPanel
   const addTag = useMapsStore((s) => s.addTag);
   const removeTag = useMapsStore((s) => s.removeTag);
   const updateMap = useMapsStore((s) => s.updateMap);
+  const updateNodeIcons = useMapsStore((s) => s.updateNodeIcons);
 
   const handleTitleSave = () => {
     const trimmed = titleDraft.trim();
@@ -128,11 +130,19 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled }: DetailsPanel
 				</div>
 				<div className="mt-2">
 					<div className="text-[11px] text-muted-foreground">Nó selecionado</div>
-					<div
-						className="text-xs font-medium text-foreground truncate"
-						title={selectedNode?.topic ?? 'Nenhum'}
-					>
-						{selectedNode?.topic ?? 'Nenhum'}
+					<div className="flex items-center gap-2">
+						<div
+							className="text-xs font-medium text-foreground truncate flex-1 min-w-0"
+							title={selectedNode?.topic ?? 'Nenhum'}
+						>
+							{selectedNode?.topic ?? 'Nenhum'}
+						</div>
+						{selectedNode && selectedNode.id !== 'root' && (
+							<IconSelector
+								value={selectedNode.icons ?? []}
+								onChange={(icons) => updateNodeIcons(map.id, selectedNode.id, icons)}
+							/>
+						)}
 					</div>
 				</div>
 

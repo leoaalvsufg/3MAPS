@@ -26,6 +26,8 @@ export interface PlanLimits {
    * Only available for Enterprise plan users.
    */
   canConfigureApiKeys: boolean;
+  /** Advanced LLM calls limit per month. -1 = unlimited. Premium: 4 */
+  advancedCallsLimit?: number;
 }
 
 /** All available template IDs (must match TEMPLATES in src/lib/constants.ts) */
@@ -57,6 +59,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     chatMessagesPerMap: 5,
     maxMapsStored: 5,
     canConfigureApiKeys: false,
+    advancedCallsLimit: 0,
   },
   premium: {
     id: 'premium',
@@ -69,6 +72,8 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     chatMessagesPerMap: -1,
     maxMapsStored: -1,
     canConfigureApiKeys: false,
+    /** Premium: 4 advanced LLM calls included per month; above uses extraCredits */
+    advancedCallsLimit: 4,
   },
   enterprise: {
     id: 'enterprise',
@@ -81,6 +86,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     chatMessagesPerMap: -1,
     maxMapsStored: -1,
     canConfigureApiKeys: true,
+    advancedCallsLimit: -1,
   },
   admin: {
     id: 'admin',
@@ -93,6 +99,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     chatMessagesPerMap: -1,
     maxMapsStored: -1,
     canConfigureApiKeys: true,
+    advancedCallsLimit: -1,
   },
 };
 

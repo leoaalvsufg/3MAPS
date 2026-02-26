@@ -370,7 +370,7 @@ export function MapPage() {
   };
 
 
-	if (!map && syncState?.status === 'loading') {
+	if (!map && (syncState?.status === 'loading' || (id && !syncState))) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2">
         <p className="text-muted-foreground">Carregando mapa...</p>
@@ -436,9 +436,14 @@ export function MapPage() {
 				{syncState?.status === 'loading' && (
 					<span className="text-xs text-muted-foreground hidden sm:inline">Sincronizando...</span>
 				)}
-				{syncState?.status === 'error' && syncState.error && (
+				{syncState?.status === 'error' && syncState.error && !map && (
 					<span className="text-xs text-destructive truncate max-w-[280px] hidden sm:inline" title={syncState.error}>
 						Offline: {syncState.error}
+					</span>
+				)}
+				{syncState?.status === 'error' && syncState.error && map && (
+					<span className="text-xs text-muted-foreground truncate max-w-[280px] hidden sm:inline" title={syncState.error}>
+						Alterações locais não sincronizadas
 					</span>
 				)}
           <div className="flex items-center gap-1">

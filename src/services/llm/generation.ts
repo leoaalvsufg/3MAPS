@@ -75,7 +75,8 @@ export async function generateMindMap(
   templateId: TemplateId,
   generateImage: boolean,
   callbacks: GenerationCallbacks,
-  urlSource?: UrlSource
+  urlSource?: UrlSource,
+  deepMode?: boolean
 ): Promise<void> {
   const { onProgress, onError, onComplete } = callbacks;
   const settings = useSettingsStore.getState();
@@ -310,50 +311,53 @@ export async function generateMindMap(
 		}
 
     // Stage 1: Analysis
-    onProgress(templateId === 'pesquisador_senior' ? 20 : 10, 'Analisando conteúdo...');
+    onProgress(templateId === 'pesquisador_senior' ? 20 : 10, deepMode ? 'Análise aprofundada em andamento...' : 'Analisando conteúdo...');
     mapsStore.setGenerationStatus('analyzing');
 
+    const analysisMaxTokens = deepMode ? 8192 : 4096;
     const analysisText = templateId === 'pesquisador_senior'
       ? await callRoutedLLM(
           'analysis',
           [{ role: 'user', content: getAcademicAnalysisPrompt(effectiveQuery, papersContext, extraContext) }],
-          { temperature: 0.3, maxTokens: 4096 }
+          { temperature: 0.3, maxTokens: analysisMaxTokens, deepMode }
         )
       : await callRoutedLLM(
           'analysis',
-          [{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
-          { temperature: 0.3, maxTokens: 4096 }
+          [{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext, deepMode) }],
+          { temperature: 0.3, maxTokens: analysisMaxTokens, deepMode }
         );
 
     const analysis = parseJSON<AnalysisResult>(analysisText);
-    onProgress(30, 'Análise concluída. Gerando mapa mental...');
+    onProgress(30, deepMode ? 'Análise concluída. Gerando mapa aprofundado...' : 'Análise concluída. Gerando mapa mental...');
 
     // Stage 2 & 3: Mind map + Article (parallel)
     mapsStore.setGenerationStatus('generating');
 
+    const mindMapMaxTokens = deepMode ? 16000 : 8000;
+    const articleMaxTokens = deepMode ? 8000 : 4000;
     const [mindMapText, articleText] = templateId === 'pesquisador_senior'
       ? await Promise.all([
           callRoutedLLM(
             'mindmap',
             [{ role: 'user', content: getAcademicMindMapPrompt(analysis, papersContext) }],
-            { temperature: 0.3, maxTokens: 10000 }
+            { temperature: 0.3, maxTokens: deepMode ? 16000 : 10000, deepMode }
           ),
           callRoutedLLM(
             'article',
             [{ role: 'user', content: getAcademicArticlePrompt(analysis, papersContext) }],
-            { temperature: 0.5, maxTokens: 6000 }
+            { temperature: 0.5, maxTokens: deepMode ? 10000 : 6000, deepMode }
           ),
         ])
       : await Promise.all([
           callRoutedLLM(
             'mindmap',
-            [{ role: 'user', content: getMindMapPrompt(analysis) }],
-            { temperature: 0.4, maxTokens: 8000 }
+            [{ role: 'user', content: getMindMapPrompt(analysis, deepMode) }],
+            { temperature: 0.4, maxTokens: mindMapMaxTokens, deepMode }
           ),
           callRoutedLLM(
             'article',
-            [{ role: 'user', content: getArticlePrompt(analysis) }],
-            { temperature: 0.7, maxTokens: 4000 }
+            [{ role: 'user', content: getArticlePrompt(analysis, deepMode) }],
+            { temperature: 0.7, maxTokens: articleMaxTokens, deepMode }
           ),
         ]);
 

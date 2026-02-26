@@ -9,6 +9,7 @@ type CallOptions = {
   temperature?: number;
   maxTokens?: number;
   skipCache?: boolean;
+  deepMode?: boolean;
 };
 
 function useServerProxy(candidate: RouteLLMOptions): boolean {
@@ -69,6 +70,7 @@ export async function callRoutedLLM(
           model: candidate.model,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
+          deepMode: options.deepMode,
         });
       }
       return await callLLM(messages, { ...candidate, ...options });

@@ -163,7 +163,7 @@ function useToast() {
 interface EditUserDialogProps {
   user: AdminUser | null;
   onClose: () => void;
-  onSave: (username: string, updates: Partial<AdminUser & { password: string }>) => Promise<void>;
+  onSave: (username: string, updates: Partial<AdminUser & { password: string; addExtraCredits?: number }>) => Promise<void>;
 }
 
 function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
@@ -172,6 +172,7 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
   const [isAdmin, setIsAdmin] = useState(user?.isAdmin ?? false);
   const [email, setEmail] = useState(user?.email ?? '');
   const [password, setPassword] = useState('');
+  const [addExtraCredits, setAddExtraCredits] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,6 +183,7 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
       setIsAdmin(user.isAdmin);
       setEmail(user.email ?? '');
       setPassword('');
+      setAddExtraCredits('');
       setError(null);
     }
   }, [user]);
@@ -191,8 +193,10 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
     setLoading(true);
     setError(null);
     try {
-      const updates: Partial<AdminUser & { password: string }> = { plan, isActive, isAdmin, email: email || null };
+      const updates: Partial<AdminUser & { password: string; addExtraCredits?: number }> = { plan, isActive, isAdmin, email: email || null };
       if (password) updates.password = password;
+      const n = parseInt(addExtraCredits, 10);
+      if (Number.isFinite(n) && n > 0) updates.addExtraCredits = n;
       await onSave(user.username, updates);
       onClose();
     } catch (err) {
@@ -230,6 +234,24 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
             <label className="text-sm font-medium text-slate-700">Nova senha (deixe em branco para manter)</label>
             <Input type="password" placeholder="••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
+          {(plan === 'premium' || user?.extraCredits !== undefined) && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-slate-700">Créditos extras (Premium)</label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">
+                  Atuais: {(user?.extraCredits ?? 0)}
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="Adicionar quantidade"
+                  value={addExtraCredits}
+                  onChange={(e) => setAddExtraCredits(e.target.value)}
+                  className="w-32"
+                />
+              </div>
+            </div>
+          )}
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-indigo-600" />

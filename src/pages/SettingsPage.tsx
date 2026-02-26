@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings, CheckCircle2, AlertCircle, User, LogOut, LogIn, Lock, Building2 } from 'lucide-react';
+import { Settings, CheckCircle2, AlertCircle, LogIn, Lock, Building2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { UserProfileCard } from '@/components/profile/UserProfileCard';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { useUsageStore } from '@/stores/usage-store';
@@ -67,27 +67,7 @@ export function SettingsPage() {
           <section className="flex flex-col gap-4">
             <h2 className="text-base font-semibold border-b border-border pb-2">Conta</h2>
             {isAuthenticated && user ? (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/30">
-                  <div className="flex items-center justify-center w-9 h-9 rounded-full bg-indigo-100 shrink-0">
-                    <User className="h-4 w-4 text-indigo-600" />
-                  </div>
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm font-medium truncate">{user.username}</span>
-                    <span className="text-xs text-muted-foreground capitalize">
-                      Plano: {planLimits?.name ?? 'Gratuito'}
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  className="w-full gap-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                  onClick={handleLogout}
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sair da conta
-                </Button>
-              </div>
+              <UserProfileCard onLogout={handleLogout} />
             ) : (
               <div className="flex flex-col gap-3">
                 <Button
@@ -140,27 +120,7 @@ export function SettingsPage() {
         <section className="flex flex-col gap-4">
           <h2 className="text-base font-semibold border-b border-border pb-2">Conta e Persistência</h2>
           {isAuthenticated && user ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/30">
-                <div className="flex items-center justify-center w-9 h-9 rounded-full bg-indigo-100 shrink-0">
-                  <User className="h-4 w-4 text-indigo-600" />
-                </div>
-                <div className="flex flex-col min-w-0 flex-1">
-                  <span className="text-sm font-medium truncate">{user.username}</span>
-                  <span className="text-xs text-muted-foreground">
-                    Mapas sincronizados automaticamente com o servidor.
-                  </span>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                onClick={handleLogout}
-              >
-                <LogOut className="h-4 w-4" />
-                Sair da conta
-              </Button>
-            </div>
+            <UserProfileCard onLogout={handleLogout} />
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">

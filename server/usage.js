@@ -11,6 +11,9 @@ import { getDb } from './db.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Premium advanced calls limit (included per month). */
+const PREMIUM_ADVANCED_CALLS_LIMIT = 4;
+
 /**
  * Returns the current month key in YYYY-MM format.
  * @returns {string}
@@ -30,8 +33,8 @@ function currentMonthKey() {
 function ensureUsageRow(username, month) {
   const db = getDb();
   db.prepare(`
-    INSERT OR IGNORE INTO usage (username, month, maps_created, chat_messages_sent)
-    VALUES (?, ?, 0, '{}')
+    INSERT OR IGNORE INTO usage (username, month, maps_created, chat_messages_sent, advanced_calls_used)
+    VALUES (?, ?, 0, '{}', 0)
   `).run(username, month);
 }
 
@@ -44,7 +47,8 @@ function ensureUsageRow(username, month) {
  *   mapsCreatedThisMonth: number,
  *   monthKey: string,
  *   totalMapsCreated: number,
- *   chatMessagesSent: Record<string, number>
+ *   chatMessagesSent: Record<string, number>,
+ *   advancedCallsUsed: number
  * }} Usage
  */
 
@@ -76,6 +80,7 @@ export async function getUsage(username) {
     monthKey: month,
     totalMapsCreated,
     chatMessagesSent,
+    advancedCallsUsed: row?.advanced_calls_used ?? 0,
   };
 }
 
@@ -148,6 +153,73 @@ export async function resetMonthlyUsage(username) {
         updated_at = datetime('now')
     WHERE username = ? AND month = ?
   `).run(username, month);
+}
+
+/**
+ * Check if user can consume one advanced LLM call.
+ * Free: allowed (limits enforced via usage/check). Premium: 4 included, then extraCredits. Enterprise/Admin: unlimited.
+ * @param {string} username
+ * @param {'free'|'premium'|'enterprise'|'admin'} planId
+ * @returns {Promise<{ allowed: boolean, reason?: string }>}
+ */
+export async function canConsumeAdvancedCall(username, planId) {
+  if (planId === 'free') {
+    return { allowed: true };
+  }
+  if (planId === 'enterprise' || planId === 'admin') {
+    return { allowed: true };
+  }
+  // premium: 4 included, then extraCredits
+  const db = getDb();
+  const month = currentMonthKey();
+  ensureUsageRow(username, month);
+
+  const usageRow = db.prepare('SELECT advanced_calls_used FROM usage WHERE username = ? AND month = ?').get(username, month);
+  const advancedUsed = usageRow?.advanced_calls_used ?? 0;
+
+  if (advancedUsed < PREMIUM_ADVANCED_CALLS_LIMIT) {
+    return { allowed: true };
+  }
+
+  const userRow = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+  const extraCredits = userRow?.extra_credits ?? 0;
+  if (extraCredits > 0) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: `Limite de ${PREMIUM_ADVANCED_CALLS_LIMIT} chamadas avançadas atingido. Solicite créditos extras ao administrador.`,
+  };
+}
+
+/**
+ * Consume one advanced call: either increment advanced_calls_used (if under limit) or decrement extra_credits.
+ * Only for premium; free/enterprise/admin are no-ops.
+ * @param {string} username
+ * @param {'free'|'premium'|'enterprise'|'admin'} planId
+ */
+export async function consumeAdvancedCall(username, planId) {
+  if (planId === 'free' || planId === 'enterprise' || planId === 'admin') return;
+
+  const db = getDb();
+  const month = currentMonthKey();
+  ensureUsageRow(username, month);
+
+  const usageRow = db.prepare('SELECT advanced_calls_used FROM usage WHERE username = ? AND month = ?').get(username, month);
+  const advancedUsed = usageRow?.advanced_calls_used ?? 0;
+
+  if (advancedUsed < PREMIUM_ADVANCED_CALLS_LIMIT) {
+    db.prepare(`
+      UPDATE usage SET advanced_calls_used = advanced_calls_used + 1, updated_at = datetime('now')
+      WHERE username = ? AND month = ?
+    `).run(username, month);
+    return;
+  }
+
+  db.prepare(`
+    UPDATE users SET extra_credits = MAX(0, extra_credits - 1), updated_at = datetime('now')
+    WHERE username = ?
+  `).run(username);
 }
 
 /**

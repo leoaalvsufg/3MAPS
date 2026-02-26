@@ -130,11 +130,11 @@ export function getLayoutedElements<T extends NodeDataWithLevel>(
   const mult = DISPLAY_MODE_CONFIG[displayMode].spacingMultiplier;
   g.setGraph({
     rankdir,
-    nodesep: 60 * mult,
-    ranksep: 80 * mult,
-    edgesep: 30,
-    marginx: 20,
-    marginy: 20,
+    nodesep: 70 * mult,
+    ranksep: 110 * mult,
+    edgesep: 40,
+    marginx: 40,
+    marginy: 30,
   });
 
   const nodesWithMeasured = nodes.map((n) => {

@@ -253,6 +253,23 @@ const MIGRATIONS = [
       `);
     },
   },
+  // Migration 0008 — premium advanced LLM calls + extra credits
+  {
+    version: 8,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE usage ADD COLUMN advanced_calls_used INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE users ADD COLUMN extra_credits INTEGER NOT NULL DEFAULT 0;
+      `);
+    },
+  },
+  // Migration 0009 — user profile avatar
+  {
+    version: 9,
+    up: (db) => {
+      db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT;`);
+    },
+  },
 ];
 
 function runMigrations(db) {

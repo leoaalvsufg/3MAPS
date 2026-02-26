@@ -121,10 +121,10 @@ export async function handleGetUser(username) {
 /**
  * PATCH /api/admin/users/:username
  * Update user fields.
- * Allowed fields: plan, isActive, isAdmin, email, password
+ * Allowed fields: plan, isActive, isAdmin, email, password, extraCredits, addExtraCredits
  */
 export async function handleUpdateUser(username, body) {
-  const allowed = ['plan', 'isActive', 'isAdmin', 'email', 'password'];
+  const allowed = ['plan', 'isActive', 'isAdmin', 'email', 'password', 'extraCredits', 'addExtraCredits'];
   const updates = {};
 
   for (const key of allowed) {

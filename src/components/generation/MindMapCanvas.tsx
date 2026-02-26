@@ -20,7 +20,8 @@ import {
   type OnNodeDragStop,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ImageIcon } from 'lucide-react';
+import { IconSelector } from '@/components/nodes/IconSelector';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import { getColorsForLevel } from '@/lib/formatoThemes';
 import {
@@ -100,6 +101,7 @@ type MindmapActions = {
   updateTopic: (id: string, topic: string) => void;
   addChild: (parentId: string) => void;
   deleteNode: (id: string) => void;
+  updateNodeIcons: (id: string, icons: string[]) => void;
 };
 
 const MindmapActionsContext = createContext<MindmapActions | null>(null);
@@ -117,6 +119,7 @@ export type MindmapNodeData = {
   level?: number;
   nodeShape?: import('@/types/formato').NodeShape;
   colorTheme?: import('@/types/formato').ColorTheme;
+  icons?: string[];
 };
 
 type MindmapNodeWithMeasured = Node<MindmapNodeData> & {
@@ -124,7 +127,7 @@ type MindmapNodeWithMeasured = Node<MindmapNodeData> & {
 };
 
 function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
-  const { updateTopic, addChild, deleteNode } = useMindmapActions();
+  const { updateTopic, addChild, deleteNode, updateNodeIcons } = useMindmapActions();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(data.label);
   const level = data.level ?? 0;
@@ -181,9 +184,16 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
             />
           ) : (
 	            <>
-	              <div className="mindmap-node__label" title={data.label}>
-	                {data.label}
-	              </div>
+	              <div className="flex items-center gap-2 min-w-0">
+	                {(data.icons ?? []).length > 0 && (
+	                  <span className="mindmap-node__icons shrink-0 text-base">
+	                    {(data.icons ?? []).slice(0, 2).join(' ')}
+	                  </span>
+	                )}
+	                <div className="mindmap-node__label min-w-0" title={data.label}>
+	                  {data.label}
+	                </div>
+	            </div>
 							{(id !== 'root' && data.definition && data.showDefinition) ? (
 							<div className="mindmap-node__definition" title={data.definition}>
 								{data.definition}
@@ -195,6 +205,19 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
 
         {selected && (
           <div className="mindmap-node__actions flex items-center gap-1 shrink-0">
+            <IconSelector
+              value={data.icons ?? []}
+              onChange={(icons) => updateNodeIcons(id, icons)}
+              trigger={
+                <button
+                  className="mindmap-node__action"
+                  title="Propor ícone"
+                  aria-label="Propor ícone"
+                >
+                  <ImageIcon className="h-4 w-4" />
+                </button>
+              }
+            />
             <button
               className="mindmap-node__action"
               title="Adicionar filho"
@@ -283,7 +306,7 @@ function buildLayout(
     formato?: import('@/types/formato').FormatoConfig;
   }
 ): { nodes: Node<MindmapNodeData>[]; edges: Edge[] } {
-  const X_SPACING = 280;
+  const X_SPACING = 360;
   const Y_SPACING = 84;
   const GAP_UNITS = 1;
   /** Extra height units for nodes that will display a definition */
@@ -331,6 +354,7 @@ function buildLayout(
         level,
         nodeShape: formato.nodeShape,
         colorTheme: formato.colorTheme,
+        ...(n.icons && n.icons.length > 0 ? { icons: [...n.icons] } : {}),
       },
     };
     const measured = estimateNodeDimensions(node, showAll ? 'detailed' : 'compact');
@@ -590,6 +614,15 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
         if (selectedId === id) setSelectedId(null);
         onChange?.(normalizeMindElixirData({ ...safeData, nodeData: nextRoot }));
       },
+      updateNodeIcons: (id, icons) => {
+        const root = safeData.nodeData;
+        const [nextRoot, changed] = updateNodeById(root, id, (n) => ({
+          ...n,
+          icons: icons.length > 0 ? [...icons] : undefined,
+        }));
+        if (!changed) return;
+        onChange?.(normalizeMindElixirData({ ...safeData, nodeData: nextRoot }));
+      },
     };
   }, [onChange, safeData, selectedId]);
 
@@ -604,7 +637,7 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
     requestAnimationFrame(() => {
       if (instance) {
         try {
-          instance.fitView({ padding: 0.15, duration: 300 });
+          instance.fitView({ padding: 0.25, duration: 300, minZoom: 0.3, maxZoom: 1.5 });
         } catch { /* ignore */ }
       }
     });
@@ -615,7 +648,7 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
       if (!instance) return;
       requestAnimationFrame(() => {
         try {
-          instance.fitView({ padding: 0.15, duration: 400 });
+          instance.fitView({ padding: 0.25, duration: 400, minZoom: 0.3, maxZoom: 1.5 });
         } catch { /* ignore */ }
       });
     },
@@ -630,7 +663,10 @@ export const MindMapCanvas = forwardRef<MindMapCanvasHandle, MindMapCanvasProps>
   // (e.g. definitions added by "Detalhado") even when the node count stays the same.
   const layoutFingerprint = useMemo(() => {
     return nodes
-      .map((n) => `${n.id}:${(n.data as MindmapNodeData)?.label ?? ''}:${(n.data as MindmapNodeData)?.definition ?? ''}`)
+      .map((n) => {
+        const d = n.data as MindmapNodeData;
+        return `${n.id}:${d?.label ?? ''}:${d?.definition ?? ''}:${(d?.icons ?? []).join(',')}`;
+      })
       .join('|');
   }, [nodes]);
 

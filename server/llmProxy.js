@@ -43,6 +43,16 @@ const DEFAULT_MODELS = {
   gemini: 'gemini-2.0-flash',
 };
 
+const DEEP_MODELS = {
+  openrouter: 'anthropic/claude-3.5-sonnet',
+  openai: 'gpt-4.1',
+  gemini: 'gemini-2.5-flash',
+};
+
+export function getDeepModel(provider) {
+  return DEEP_MODELS[provider] ?? DEFAULT_MODELS[provider];
+}
+
 /**
  * Mapeamento de nomes curtos de modelos Gemini para o formato OpenRouter.
  * Garante que IDs no formato Gemini direto sejam convertidos ao chamar via OpenRouter.

@@ -3,6 +3,15 @@ export interface AuthUser {
   username: string;
   isAdmin?: boolean;
   plan?: string;
+  email?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface UserProfile {
+  username: string;
+  email: string | null;
+  avatarUrl: string | null;
+  plan: string;
 }
 
 export interface AuthResponse {
@@ -102,4 +111,72 @@ export async function verifyMagicLink(token: string): Promise<AuthResponse> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
   });
+}
+
+/** Get current user profile (email, avatar, etc.). Requires token. */
+export async function getUserProfile(token: string): Promise<{ profile: UserProfile }> {
+  const res = await fetch('/api/user/profile', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return { profile: data };
+}
+
+/** Update user profile (email). */
+export async function updateUserProfile(token: string, updates: { email?: string | null }): Promise<UserProfile> {
+  const res = await fetch('/api/user/profile', {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg);
+  }
+  return (await res.json()) as UserProfile;
+}
+
+/** Change password. */
+export async function changeUserPassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ message: string }> {
+  const res = await fetch('/api/user/change-password', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg);
+  }
+  return (await res.json()) as { message: string };
+}
+
+/** Upload avatar (base64 data URL). */
+export async function uploadAvatar(token: string, avatarDataUrl: string): Promise<{ avatarUrl: string }> {
+  const res = await fetch('/api/user/avatar', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ avatar: avatarDataUrl }),
+  });
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg);
+  }
+  return (await res.json()) as { avatarUrl: string };
 }

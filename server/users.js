@@ -73,10 +73,12 @@ function rowToProfile(row) {
     passwordHash: row.password_hash,
     plan: row.plan,
     email: row.email ?? null,
+    avatarUrl: row.avatar_url ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     isActive: row.is_active === 1,
     isAdmin: row.is_admin === 1,
+    extraCredits: row.extra_credits ?? 0,
   };
 }
 
@@ -236,6 +238,25 @@ export async function getUserById(userId) {
  * @param {{ plan?: string, email?: string, isActive?: boolean, isAdmin?: boolean, password?: string }} updates
  * @returns {Promise<UserProfile | null>}
  */
+/**
+ * Change password for a user. Requires current password (not for Firebase-only users).
+ * @param {string} username
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {Promise<void>}
+ */
+export async function changePassword(username, currentPassword, newPassword) {
+  const profile = await getUser(username);
+  if (!profile) throw new Error('Usuário não encontrado');
+  if (profile.passwordHash === FIREBASE_PASSWORD_PLACEHOLDER) {
+    throw new Error('Contas vinculadas ao Google/Firebase não podem alterar senha por aqui.');
+  }
+  const ok = await verifyPassword(currentPassword, profile.passwordHash);
+  if (!ok) throw new Error('Senha atual incorreta');
+  validatePassword(newPassword);
+  await updateUser(username, { password: newPassword });
+}
+
 export async function updateUser(username, updates) {
   const db = getDb();
   const existing = await getUser(username);
@@ -249,8 +270,14 @@ export async function updateUser(username, updates) {
     values.push(updates.plan);
   }
   if (updates.email !== undefined) {
+    const v = updates.email === null || updates.email === '' ? null : String(updates.email).trim().toLowerCase();
     fields.push('email = ?');
-    values.push(updates.email);
+    values.push(v);
+  }
+  if (updates.avatarUrl !== undefined) {
+    const v = updates.avatarUrl === null || updates.avatarUrl === '' ? null : String(updates.avatarUrl);
+    fields.push('avatar_url = ?');
+    values.push(v);
   }
   if (updates.isActive !== undefined) {
     fields.push('is_active = ?');
@@ -265,6 +292,21 @@ export async function updateUser(username, updates) {
     const newHash = await hashPassword(updates.password);
     fields.push('password_hash = ?');
     values.push(newHash);
+  }
+  if (updates.extraCredits !== undefined) {
+    const n = Math.max(0, parseInt(updates.extraCredits, 10));
+    if (!Number.isFinite(n)) throw new Error('extraCredits must be a non-negative integer');
+    fields.push('extra_credits = ?');
+    values.push(n);
+  }
+  if (updates.addExtraCredits !== undefined) {
+    const delta = parseInt(updates.addExtraCredits, 10);
+    if (!Number.isFinite(delta) || delta < 0) throw new Error('addExtraCredits must be a non-negative integer');
+    const current = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    const currentVal = current?.extra_credits ?? 0;
+    const newVal = Math.max(0, currentVal + delta);
+    fields.push('extra_credits = ?');
+    values.push(newVal);
   }
 
   if (fields.length === 0) return existing;

@@ -1,0 +1,27 @@
+---
+description: Requisitos e correções para login social (Firebase) — evita 500 e erros comuns
+globs: server/firebaseAdmin.js, server/index.js, server/users.js
+alwaysApply: false
+---
+
+# Login Social (Firebase) — 3Maps
+
+## Configuração obrigatória
+
+1. **Arquivo de credenciais**: `server/firebase-service-account.json` (ou `FIREBASE_SERVICE_ACCOUNT_PATH`)
+2. **Migrações do banco**: migrations 5 (firebase_uid) e 9 (avatar_url) devem estar aplicadas
+3. **Checagem antes de verificar token**: Sempre chamar `initFirebaseAdmin()` antes de `verifyFirebaseIdToken`; se não configurado, retornar **503** (não 401)
+
+## Correções aplicadas (não regredir)
+
+- **DecodedIdToken não inclui `name`**: O token JWT do Firebase pode não ter display name. Usar `admin.auth().getUser(uid)` para obter `displayName` quando ausente no token
+- **Tratamento de app duplicado**: Em hot-reload, `admin.initializeApp` pode lançar `app/duplicate-app` — capturar e usar `admin.app('mindmap')`
+- **Erro 500**: Ao ocorrer na rota `/api/auth/firebase`, logar mensagem, stack e hint (migrações). Retornar mensagem diferenciada para erros de banco vs genéricos
+- **Validação de username**: `uniqueUsernameFromEmail` deve produzir usernames compatíveis com `validateAuthUsername` (3–30 chars, `[a-zA-Z0-9_-]`)
+
+## Fluxo correto
+
+1. Verificar se Firebase está configurado → 503 se não
+2. Verificar token → 401 se inválido
+3. `getOrCreateUserFromFirebase` (pode lançar se DB desatualizado)
+4. `getUser`, `logActivity`, `generateToken`

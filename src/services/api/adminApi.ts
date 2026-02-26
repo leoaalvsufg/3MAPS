@@ -14,6 +14,7 @@ export interface AdminUser {
   updatedAt: string;
   isActive: boolean;
   isAdmin: boolean;
+  extraCredits?: number;
 }
 
 export interface AdminUserDetail extends AdminUser {
@@ -22,6 +23,7 @@ export interface AdminUserDetail extends AdminUser {
     monthKey: string;
     totalMapsCreated: number;
     chatMessagesSent: Record<string, number>;
+    advancedCallsUsed?: number;
   };
   mapCount: number;
 }
@@ -189,7 +191,7 @@ export async function getAdminUser(username: string): Promise<AdminUserDetail> {
 
 export async function updateAdminUser(
   username: string,
-  updates: Partial<Pick<AdminUser, 'plan' | 'isActive' | 'isAdmin' | 'email'> & { password: string }>
+  updates: Partial<Pick<AdminUser, 'plan' | 'isActive' | 'isAdmin' | 'email'> & { password: string; extraCredits?: number; addExtraCredits?: number }>
 ): Promise<AdminUser> {
   return adminFetch<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}`, {
     method: 'PATCH',

@@ -12,7 +12,7 @@ export function getOpenApiSpec(baseUrl = '') {
     info: {
       title: '3Maps API',
       description: 'API do 3Maps — Gerador de mapas mentais com IA. Use JWT (login) ou token de API para autenticação.',
-      version: '0.1.5',
+      version: '0.1.6',
     },
     servers: [{ url: serverUrl }],
     security: [{ bearerAuth: [] }],

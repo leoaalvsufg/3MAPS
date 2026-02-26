@@ -53,6 +53,9 @@ interface MapsStore {
   // Tags
   addTag: (mapId: string, tag: string) => void;
   removeTag: (mapId: string, tag: string) => void;
+
+  /** Update a node's icons in the map data. */
+  updateNodeIcons: (mapId: string, nodeId: string, icons: string[]) => void;
   getAllTags: () => string[];
 
   // Generation state
@@ -315,6 +318,18 @@ export const useMapsStore = create<MapsStore>()(
         const map = get().getMap(mapId);
         if (!map) return;
         get().updateMap(mapId, { tags: map.tags.filter((t) => t !== tag) });
+      },
+
+      updateNodeIcons: (mapId, nodeId, icons) => {
+        const map = get().getMap(mapId);
+        if (!map?.mindElixirData) return;
+        const root = map.mindElixirData.nodeData;
+        const updateNode = (n: import('@/types/mindmap').MindElixirNode): import('@/types/mindmap').MindElixirNode => {
+          if (n.id === nodeId) return { ...n, icons: icons.length > 0 ? [...icons] : undefined };
+          return { ...n, children: (n.children ?? []).map(updateNode) };
+        };
+        const nextRoot = updateNode(root);
+        get().updateMap(mapId, { mindElixirData: { ...map.mindElixirData, nodeData: nextRoot } });
       },
 
       getAllTags: () => {

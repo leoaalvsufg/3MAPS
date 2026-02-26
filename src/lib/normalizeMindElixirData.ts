@@ -59,6 +59,12 @@ export function normalizeMindElixirData(input: MindElixirData | null | undefined
     const children: MindElixirNode[] = Array.isArray(rawChildren) ? (rawChildren as MindElixirNode[]) : [];
     n.children = children.map((c) => normalizeNode(c));
 
+    // icons: defensive normalization — must be string array
+    const rawIcons = (n as unknown as { icons?: unknown }).icons;
+    n.icons = Array.isArray(rawIcons)
+      ? (rawIcons as unknown[]).filter((x): x is string => typeof x === 'string')
+      : undefined;
+
     return n;
   }
 
