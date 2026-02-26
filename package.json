@@ -1,7 +1,7 @@
 {
   "name": "mindmap",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -36,6 +36,7 @@
     "firebase-admin": "^13.6.1",
     "html-to-image": "^1.11.11",
     "html2canvas": "^1.4.1",
+    "jsdom": "^25.0.0",
     "jspdf": "^4.2.0",
     "lucide-react": "^0.575.0",
     "mind-elixir": "^5.8.3",

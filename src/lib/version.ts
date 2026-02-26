@@ -10,7 +10,7 @@
 import pkg from '../../package.json';
 
 export const APP_VERSION = pkg.version;
-export const RELEASE_ID = 9;
+export const RELEASE_ID = 10;
 
 export interface ReleaseNote {
   version: string;
@@ -20,6 +20,15 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: '0.1.10',
+    date: '2026-02-27',
+    title: 'Rate limit ajustado',
+    items: [
+      'Rate limit: arquivos estáticos (/, /assets/*, .js, .css) isentos',
+      'Limite de API: 300 req/min por IP (antes 2000)',
+    ],
+  },
   {
     version: '0.1.9',
     date: '2026-02-26',

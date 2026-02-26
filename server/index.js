@@ -33,7 +33,6 @@ import {
 import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
 import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits, getDeepModel } from './llmProxy.js';
 import { searchAcademicPapers } from './academicSearch.js';
-import { extractWebContent } from './webExtract.js';
 import { getDb } from './db.js';
 import { getOpenApiSpec } from './openapi.js';
 
@@ -1472,6 +1471,7 @@ const server = http.createServer(async (req, res) => {
         return await sendJson(res, 400, { error: 'url é obrigatório' }, corsHeaders ?? {});
       }
       try {
+        const { extractWebContent } = await import('./webExtract.js');
         const result = await extractWebContent({
           url: urlInput.trim(),
           mode: mode ?? 'readability',

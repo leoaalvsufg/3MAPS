@@ -10,7 +10,7 @@
  *   if (!checkRateLimit(req, res)) return; // response already sent
  */
 
-const MAX_REQUESTS = 2000;     // requests allowed per window (admin panel + normal use)
+const MAX_REQUESTS = 300;      // requests allowed per window (API only; static files are exempt)
 const WINDOW_MS = 60 * 1000;   // 1 minute in milliseconds
 const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production';
 
@@ -50,9 +50,25 @@ function getClientIp(req) {
   return req.socket?.remoteAddress ?? 'unknown';
 }
 
+/** Common static file extensions — requests for these skip rate limiting. */
+const STATIC_EXT = /\.(js|mjs|css|ico|png|jpg|jpeg|svg|webp|woff2?|ttf|map|txt)$/i;
+
+/**
+ * Returns true if the request is for a static asset (no rate limit).
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {boolean}
+ */
+function isStaticRequest(req) {
+  const pathname = (req.url ?? '/').split('?')[0];
+  if (pathname === '/' || pathname === '/index.html') return true;
+  if (pathname === '/favicon.ico' || pathname === '/robots.txt') return true;
+  if (pathname.startsWith('/assets/')) return true;
+  return STATIC_EXT.test(pathname);
+}
+
 /**
  * Checks whether the request is within the rate limit for its IP.
- * Skips rate limiting for localhost and in development mode.
+ * Skips rate limiting for localhost, development mode, and static files.
  *
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
@@ -60,7 +76,7 @@ function getClientIp(req) {
  */
 export function checkRateLimit(req, res) {
   const ip = getClientIp(req);
-  if (IS_DEVELOPMENT || isLocalhost(ip)) return true;
+  if (IS_DEVELOPMENT || isLocalhost(ip) || isStaticRequest(req)) return true;
   const now = Date.now();
   const windowStart = now - WINDOW_MS;
 
