@@ -52,12 +52,13 @@ export function validatePassword(password) {
  *   userId: string,
  *   username: string,
  *   passwordHash: string,
- *   plan: 'free' | 'premium' | 'admin',
+ *   plan: 'free' | 'premium' | 'admin' | 'enterprise',
  *   email: string | null,
  *   createdAt: string,
  *   updatedAt: string,
  *   isActive: boolean,
- *   isAdmin: boolean
+ *   isAdmin: boolean,
+ *   stripeCustomerId?: string | null
  * }} UserProfile
  */
 
@@ -77,6 +78,7 @@ function rowToProfile(row) {
     updatedAt: row.updated_at,
     isActive: row.is_active === 1,
     isAdmin: row.is_admin === 1,
+    stripeCustomerId: row.stripe_customer_id ?? null,
   };
 }
 
@@ -233,7 +235,7 @@ export async function getUserById(userId) {
 /**
  * Update user fields (plan, email, isActive, isAdmin, password).
  * @param {string} username
- * @param {{ plan?: string, email?: string, isActive?: boolean, isAdmin?: boolean, password?: string }} updates
+ * @param {{ plan?: string, email?: string, isActive?: boolean, isAdmin?: boolean, password?: string, stripeCustomerId?: string | null }} updates
  * @returns {Promise<UserProfile | null>}
  */
 export async function updateUser(username, updates) {
@@ -265,6 +267,10 @@ export async function updateUser(username, updates) {
     const newHash = await hashPassword(updates.password);
     fields.push('password_hash = ?');
     values.push(newHash);
+  }
+  if (updates.stripeCustomerId !== undefined) {
+    fields.push('stripe_customer_id = ?');
+    values.push(updates.stripeCustomerId === null || updates.stripeCustomerId === '' ? null : updates.stripeCustomerId);
   }
 
   if (fields.length === 0) return existing;

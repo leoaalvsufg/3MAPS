@@ -479,12 +479,99 @@ function getStripePriceId(plan) {
   return '';
 }
 
+/** Mapeia price ID Stripe -> plano interno. */
+function planFromStripePriceId(priceId) {
+  if (!priceId || typeof priceId !== 'string') return null;
+  const pid = priceId.trim();
+  const premiumPrice = getStripePriceId('premium');
+  const enterprisePrice = getStripePriceId('enterprise');
+  if (pid === enterprisePrice && enterprisePrice) return 'enterprise';
+  if (pid === premiumPrice && premiumPrice) return 'premium';
+  return null;
+}
+
+/**
+ * Sincroniza o plano do usuário com a Stripe (assinaturas ativas).
+ * Chamado no login/me para garantir plano correto.
+ * @param {object} profile - perfil do usuário (deve ter stripeCustomerId)
+ * @returns {Promise<{ plan: string }>} plano efetivo após sync
+ */
+async function syncStripePlanAtLogin(profile) {
+  if (!profile?.stripeCustomerId || profile.isAdmin) {
+    return { plan: profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free') };
+  }
+  const stripeSecretKey = String(
+    getAdminSetting('stripe_secret_key', process.env.STRIPE_SECRET_KEY ?? '') ?? ''
+  ).trim();
+  if (!stripeSecretKey) return { plan: profile.plan ?? 'free' };
+
+  try {
+    const params = new URLSearchParams();
+    params.set('customer', profile.stripeCustomerId);
+    params.set('status', 'active');
+    params.set('limit', '10');
+    const response = await fetch(
+      `https://api.stripe.com/v1/subscriptions?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${stripeSecretKey}`,
+        },
+      }
+    );
+    const raw = await response.text();
+    let json = null;
+    try {
+      json = raw ? JSON.parse(raw) : null;
+    } catch {
+      json = null;
+    }
+    if (!response.ok) {
+      logger.warn('Stripe subscriptions fetch failed', {
+        username: profile.username,
+        status: response.status,
+      });
+      return { plan: profile.plan ?? 'free' };
+    }
+
+    const subs = json?.data ?? [];
+    let bestPlan = null;
+    for (const sub of subs) {
+      const items = sub?.items?.data ?? [];
+      for (const item of items) {
+        const priceId = item?.price?.id;
+        const plan = planFromStripePriceId(priceId);
+        if (plan === 'enterprise') bestPlan = 'enterprise';
+        else if (plan === 'premium' && bestPlan !== 'enterprise') bestPlan = 'premium';
+      }
+    }
+
+    const targetPlan = bestPlan ?? 'free';
+    if (targetPlan !== (profile.plan ?? 'free')) {
+      await updateUser(profile.username, { plan: targetPlan });
+      logger.info('Stripe plan synced at login', {
+        username: profile.username,
+        from: profile.plan,
+        to: targetPlan,
+      });
+    }
+    return { plan: targetPlan };
+  } catch (err) {
+    logger.warn('Stripe sync at login failed', {
+      username: profile.username,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return { plan: profile.plan ?? 'free' };
+  }
+}
+
 async function createStripeCheckoutSession({
   secretKey,
   priceId,
   plan,
   username,
   email,
+  customerId,
   successUrl,
   cancelUrl,
 }) {
@@ -497,7 +584,11 @@ async function createStripeCheckoutSession({
   params.set('allow_promotion_codes', 'true');
   params.set('metadata[username]', username);
   params.set('metadata[targetPlan]', plan);
-  if (email) params.set('customer_email', email);
+  if (customerId && /^cus_/.test(customerId)) {
+    params.set('customer', customerId);
+  } else if (email) {
+    params.set('customer_email', email);
+  }
 
   const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
@@ -816,19 +907,24 @@ const server = http.createServer(async (req, res) => {
       if (!payload) {
         return await sendJson(res, 401, { error: 'Invalid or expired token' }, corsHeaders ?? {});
       }
-      // Fetch fresh user data to include current plan and isAdmin status
+      // Fetch fresh user data and sync plan with Stripe
       let freshUser = null;
       try {
         freshUser = await getUser(payload.username);
       } catch {
         // ignore
       }
+      let plan = freshUser?.isAdmin ? 'admin' : (freshUser?.plan ?? 'free');
+      if (freshUser && !freshUser.isAdmin) {
+        const synced = await syncStripePlanAtLogin(freshUser);
+        plan = synced.plan;
+      }
       return await sendJson(res, 200, {
         user: {
           userId: payload.userId,
           username: payload.username,
           isAdmin: payload.isAdmin ?? false,
-          plan: (freshUser?.isAdmin ? 'admin' : (freshUser?.plan ?? 'free')),
+          plan,
         },
       }, corsHeaders ?? {});
     }
@@ -1532,11 +1628,14 @@ const server = http.createServer(async (req, res) => {
         const session = event.data?.object;
         const username = session?.metadata?.username;
         const targetPlan = (session?.metadata?.targetPlan ?? '').toLowerCase();
+        const customerId = typeof session?.customer === 'string' ? session.customer : null;
         if (username && (targetPlan === 'premium' || targetPlan === 'enterprise')) {
           try {
             const profile = await getUser(username);
             if (profile && !profile.isAdmin) {
-              await updateUser(username, { plan: targetPlan });
+              const updates = { plan: targetPlan };
+              if (customerId) updates.stripeCustomerId = customerId;
+              await updateUser(username, updates);
               logActivity({ username, action: 'billing_plan_upgraded', details: { plan: targetPlan } });
               logger.info('User plan upgraded via Stripe webhook', { username, plan: targetPlan });
             }
@@ -1607,6 +1706,7 @@ const server = http.createServer(async (req, res) => {
           plan: requestedPlan,
           username: authUser.username,
           email: profile.email ?? null,
+          customerId: profile.stripeCustomerId ?? null,
           successUrl,
           cancelUrl,
         });

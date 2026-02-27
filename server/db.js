@@ -253,6 +253,17 @@ const MIGRATIONS = [
       `);
     },
   },
+  // Migration 0008 — Stripe customer ID (para sync de plano no login)
+  {
+    version: 8,
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN stripe_customer_id TEXT`);
+      } catch (e) {
+        if (!String(e?.message || e).includes('duplicate column')) throw e;
+      }
+    },
+  },
 ];
 
 function runMigrations(db) {
