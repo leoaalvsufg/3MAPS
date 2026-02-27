@@ -1,12 +1,19 @@
+import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
 import { KeyboardShortcutsDialog } from '@/components/onboarding/KeyboardShortcutsDialog';
+import { useLlmStatusStore } from '@/stores/llm-status-store';
 
 function AppShellInner() {
   useKeyboardShortcuts();
+
+  useEffect(() => {
+    useLlmStatusStore.getState().fetchStatus();
+    useLlmStatusStore.getState().fetchOptions();
+  }, []);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">

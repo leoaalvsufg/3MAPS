@@ -51,6 +51,18 @@ export default defineConfig({
         target: 'http://localhost:8787',
         changeOrigin: true,
       },
+      '/api/docs': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/llm': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/api/image': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
     },
   },
   build: {

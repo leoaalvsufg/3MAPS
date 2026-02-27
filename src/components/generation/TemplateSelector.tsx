@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils';
 import { TEMPLATES } from '@/lib/constants';
 import { PLANS } from '@/lib/plans';
 import { useUsageStore } from '@/stores/usage-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { Lock } from 'lucide-react';
 import type { TemplateId } from '@/types/templates';
 
@@ -26,8 +27,11 @@ const colorMap: Record<string, string> = {
 
 export function TemplateSelector({ selected, onSelect, onLockedSelect }: TemplateSelectorProps) {
   const limits = useUsageStore((s) => s.limits);
-  // Use server-fetched limits if available, else fall back to free plan
-  const allowedTemplates = limits?.templatesAllowed ?? PLANS.free.templatesAllowed;
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
+  // Admin is always enterprise+ on UI, even before usage payload arrives.
+  const allowedTemplates = isAdmin
+    ? PLANS.admin.templatesAllowed
+    : (limits?.templatesAllowed ?? PLANS.free.templatesAllowed);
 
   return (
     <div className="w-full">

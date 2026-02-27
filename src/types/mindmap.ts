@@ -90,6 +90,10 @@ export interface MermaidDiagram {
 export interface SavedMap {
   id: string;
   title: string;
+  /** For admin views: owner username of this map. */
+  ownerUsername?: string;
+  /** For admin views: display path in "user/map_name" format. */
+  ownerPath?: string;
   query: string;
   template: string;
   /**

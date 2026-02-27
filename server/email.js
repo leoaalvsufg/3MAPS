@@ -200,3 +200,96 @@ Equipe 3Maps
 
   return sendEmail({ to, subject: '🔐 Redefinir senha — 3Maps', html, text });
 }
+
+// ---------------------------------------------------------------------------
+// Magic link email (login sem senha)
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a magic link email for passwordless login.
+ * @param {{ to: string, username: string, token: string }} options
+ * @returns {Promise<boolean>}
+ */
+export async function sendMagicLinkEmail({ to, username, token }) {
+  const magicUrl = `${APP_URL}/auth?action=magic&token=${encodeURIComponent(token)}`;
+
+  const text = `
+Olá, ${username}!
+
+Recebemos uma solicitação para entrar na sua conta no 3Maps sem senha.
+
+Clique no link abaixo para entrar (válido por 15 minutos):
+
+${magicUrl}
+
+Se você não solicitou este acesso, ignore este e-mail.
+Ninguém entrará na sua conta sem clicar neste link.
+
+Atenciosamente,
+Equipe 3Maps
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar — 3Maps</title>
+</head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);overflow:hidden;">
+          <tr>
+            <td style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:32px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">🧠 3Maps</h1>
+              <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px;">Gerador de mapas mentais com IA</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="margin:0 0 16px;color:#1e293b;font-size:20px;font-weight:700;">Entrar na sua conta</h2>
+              <p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.6;">
+                Olá, <strong>${username}</strong>!
+              </p>
+              <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
+                Clique no botão abaixo para entrar sem senha.
+              </p>
+              <div style="text-align:center;margin:32px 0;">
+                <a href="${magicUrl}"
+                   style="display:inline-block;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:600;letter-spacing:0.2px;">
+                  Entrar
+                </a>
+              </div>
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:13px;line-height:1.6;">
+                Este link é válido por <strong>15 minutos</strong> e só pode ser usado uma vez.
+              </p>
+              <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.6;">
+                Se você não solicitou este acesso, ignore este e-mail.
+              </p>
+              <hr style="border:none;border-top:1px solid #e2e8f0;margin:32px 0;">
+              <p style="margin:0;color:#cbd5e1;font-size:12px;text-align:center;">
+                Se o botão não funcionar, copie e cole este link no seu navegador:<br>
+                <a href="${magicUrl}" style="color:#6366f1;word-break:break-all;">${magicUrl}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f8fafc;padding:20px 40px;text-align:center;border-top:1px solid #e2e8f0;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;">
+                3Maps © ${new Date().getFullYear()} — Gerador de mapas mentais com IA
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`.trim();
+
+  return sendEmail({ to, subject: '🔗 Entrar no 3Maps sem senha', html, text });
+}

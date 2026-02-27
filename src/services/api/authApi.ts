@@ -83,3 +83,23 @@ export async function resetPassword(token: string, newPassword: string): Promise
     body: JSON.stringify({ token, newPassword }),
   });
 }
+
+/** Solicita envio de link mágico por e-mail (aceita e-mail ou username). */
+export async function requestMagicLink(login: string): Promise<{ message: string }> {
+  const trimmed = login.trim();
+  const body = trimmed.includes('@') ? { email: trimmed } : { username: trimmed };
+  return authFetch<{ message: string }>('/api/auth/magic-link', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Troca token do link mágico por JWT (faz login). */
+export async function verifyMagicLink(token: string): Promise<AuthResponse> {
+  return authFetch<AuthResponse>('/api/auth/magic-link/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+}

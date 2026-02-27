@@ -160,15 +160,12 @@ export async function getOrCreateUserFromFirebase(firebaseUser) {
   const { uid, email, displayName } = firebaseUser;
   if (!uid) throw new Error('Firebase UID is required');
 
-  // 1. Try to find by Firebase UID (already linked)
   const existing = await getUserByFirebaseUid(uid);
   if (existing) {
     return { userId: existing.userId, username: existing.username };
   }
 
   const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : null;
-
-  // 2. Try to find by email
   if (normalizedEmail) {
     const db = getDb();
     const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
@@ -178,24 +175,6 @@ export async function getOrCreateUserFromFirebase(firebaseUser) {
     }
   }
 
-  // 3. Fallback: try to find by username derived from email (handles accounts
-  //    created without an email that match the Firebase email's local part)
-  if (normalizedEmail) {
-    const local = normalizedEmail.split('@')[0] || '';
-    const candidateUsername = local.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
-    if (candidateUsername.length >= 3) {
-      const byUsername = await getUser(candidateUsername);
-      if (byUsername && !byUsername.email) {
-        // Link Firebase UID and set email on the existing account
-        const db = getDb();
-        db.prepare('UPDATE users SET firebase_uid = ?, email = ?, updated_at = datetime(\'now\') WHERE id = ?')
-          .run(uid, normalizedEmail, byUsername.userId);
-        return { userId: byUsername.userId, username: byUsername.username };
-      }
-    }
-  }
-
-  // 4. No existing account found — create a new one
   const username = await uniqueUsernameFromEmail(normalizedEmail || displayName || uid);
   const userId = crypto.randomUUID();
   const db = getDb();
@@ -220,6 +199,20 @@ export async function getUser(username) {
 
   const db = getDb();
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!row) return null;
+  return rowToProfile(row);
+}
+
+/**
+ * Read a user profile by email (case-insensitive).
+ * @param {string} email
+ * @returns {Promise<UserProfile | null>}
+ */
+export async function getUserByEmail(email) {
+  if (!email || typeof email !== 'string') return null;
+  const db = getDb();
+  const normalized = email.trim().toLowerCase();
+  const row = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = ? AND is_active = 1').get(normalized);
   if (!row) return null;
   return rowToProfile(row);
 }
@@ -328,15 +321,22 @@ export async function listUsers(options = {}) {
 }
 
 /**
- * Validate username + password and return the user identity if correct.
- * @param {string} username
+ * Validate login (username or email) + password and return the user identity if correct.
+ * @param {string} login — username or email
  * @param {string} password
  * @returns {Promise<{ userId: string, username: string, isAdmin: boolean } | null>}
  */
-export async function validateCredentials(username, password) {
-  const profile = await getUser(username);
+export async function validateCredentials(login, password) {
+  const trimmed = (login || '').trim();
+  if (!trimmed) return null;
+  const isEmail = trimmed.includes('@');
+  const profile = isEmail
+    ? await getUserByEmail(trimmed)
+    : await getUser(trimmed);
   if (!profile) return null;
   if (!profile.isActive) return null;
+  // Firebase-only users have placeholder hash; do not allow password login
+  if (profile.passwordHash === FIREBASE_PASSWORD_PLACEHOLDER) return null;
   const ok = await verifyPassword(password, profile.passwordHash);
   if (!ok) return null;
   return { userId: profile.userId, username: profile.username, isAdmin: profile.isAdmin };

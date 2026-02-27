@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { useMapsStore } from '@/stores/maps-store';
 import { TEMPLATES } from '@/lib/constants';
+import { APP_VERSION, RELEASE_ID } from '@/lib/version';
 
 interface NavItem {
   to: string;
@@ -73,8 +74,8 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 5);
 
-  // Enterprise users can access Settings (API key configuration)
-  const canConfigureApiKeys = planLimits?.canConfigureApiKeys === true;
+  // Admin always has full access; otherwise follow plan limits.
+  const canConfigureApiKeys = isAdmin || planLimits?.canConfigureApiKeys === true;
   const NAV_ITEMS = canConfigureApiKeys
     ? [...BASE_NAV_ITEMS, SETTINGS_NAV_ITEM]
     : BASE_NAV_ITEMS;
@@ -187,10 +188,10 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
                         ? 'bg-slate-50 text-slate-900'
                         : 'text-slate-500 hover:bg-slate-50/80 hover:text-slate-700'
                     )}
-                    title={map.title}
+                    title={map.ownerPath ?? map.title}
                   >
                     <span className="text-sm shrink-0">{template?.icon ?? '🗺️'}</span>
-                    <span className="text-xs truncate flex-1">{map.title}</span>
+                    <span className="text-xs truncate flex-1">{map.ownerPath ?? map.title}</span>
                   </button>
                 );
               })}
@@ -313,15 +314,53 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
           </Tooltip>
         )}
 
+        {collapsed && (
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <NavLink
+                to="/release-notes"
+                onClick={onClose}
+                className="flex justify-center py-1.5 text-[10px] text-slate-400 hover:text-primary font-mono transition-colors"
+                title={`v${APP_VERSION} · Release ${RELEASE_ID}`}
+              >
+                v{APP_VERSION}
+              </NavLink>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              <p className="font-medium">v{APP_VERSION} · Release {RELEASE_ID}</p>
+              <p className="text-xs text-muted-foreground">Clique para ver notas da versão</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
         {!collapsed && !isAuthenticated && (
-          <p className="text-[10px] text-slate-300 text-center font-medium tracking-wide uppercase mt-2">
-            3Maps © {new Date().getFullYear()}
-          </p>
+          <div className="flex flex-col items-center gap-0.5 mt-2">
+            <p className="text-[10px] text-slate-300 font-medium tracking-wide uppercase">
+              3Maps © {new Date().getFullYear()}
+            </p>
+            <NavLink
+              to="/release-notes"
+              onClick={onClose}
+              className="text-[10px] text-slate-400 hover:text-primary font-mono transition-colors"
+              title="Ver notas da versão"
+            >
+              v{APP_VERSION} · R{RELEASE_ID}
+            </NavLink>
+          </div>
         )}
         {!collapsed && isAuthenticated && (
-          <p className="text-[10px] text-slate-300 text-center font-medium tracking-wide uppercase mt-1">
-            3Maps © {new Date().getFullYear()}
-          </p>
+          <div className="flex flex-col items-center gap-0.5 mt-1">
+            <p className="text-[10px] text-slate-300 font-medium tracking-wide uppercase">
+              3Maps © {new Date().getFullYear()}
+            </p>
+            <NavLink
+              to="/release-notes"
+              onClick={onClose}
+              className="text-[10px] text-slate-400 hover:text-primary font-mono transition-colors"
+              title="Ver notas da versão"
+            >
+              v{APP_VERSION} · R{RELEASE_ID}
+            </NavLink>
+          </div>
         )}
       </div>
     </div>

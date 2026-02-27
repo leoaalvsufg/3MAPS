@@ -8,8 +8,8 @@ import type {
 	SavedMap,
 } from '@/types/mindmap';
 import type { TemplateId } from '@/types/templates';
-import { callLLM, parseJSON } from './client';
-import { getRouteOptions } from './routeLLM';
+import { parseJSON } from './client';
+import { callRoutedLLM } from './routedClient';
 import {
   getAnalysisPrompt,
 	getDeepThoughtPreflightPrompt,
@@ -68,7 +68,7 @@ export async function generateMindMap(
   const settings = useSettingsStore.getState();
   const mapsStore = useMapsStore.getState();
 
-  if (!settings.hasApiKey()) {
+  if (!settings.hasAnyApiKey()) {
     onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
     return;
   }
@@ -97,14 +97,10 @@ export async function generateMindMap(
 			onProgress(5, 'Pensamento profundo: levantando fontes e contexto...');
 			mapsStore.setGenerationStatus('analyzing');
 
-			const preflightOpts = await getRouteOptions('preflight');
-			if (!preflightOpts) {
-				onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
-				return;
-			}
-			const preflightText = await callLLM(
+			const preflightText = await callRoutedLLM(
+				'preflight',
 				[{ role: 'user', content: getDeepThoughtPreflightPrompt(query) }],
-				{ ...preflightOpts, temperature: 0.2, maxTokens: 2200 }
+				{ temperature: 0.2, maxTokens: 4096 }
 			);
 
 			const preflight = parseJSON<DeepThoughtPreflightResult>(preflightText);
@@ -156,18 +152,16 @@ export async function generateMindMap(
 
 			// Reanálise: refinar a pergunta antes da análise para melhor qualidade
 			onProgress(8, 'Refinando pergunta para análise...');
-			const refineOpts = await getRouteOptions('preflight');
-			if (refineOpts) {
-				try {
-					const refinedText = await callLLM(
-						[{ role: 'user', content: getQueryRefinementPrompt(effectiveQuery, extraContext) }],
-						{ ...refineOpts, temperature: 0.2, maxTokens: 500 }
-					);
-					const trimmed = refinedText.trim();
-					if (trimmed.length > 0) effectiveQuery = trimmed;
-				} catch {
-					// Se falhar o refinamento, segue com effectiveQuery atual
-				}
+			try {
+				const refinedText = await callRoutedLLM(
+					'preflight',
+					[{ role: 'user', content: getQueryRefinementPrompt(effectiveQuery, extraContext) }],
+					{ temperature: 0.2, maxTokens: 500 }
+				);
+				const trimmed = refinedText.trim();
+				if (trimmed.length > 0) effectiveQuery = trimmed;
+			} catch {
+				// Se falhar o refinamento, segue com effectiveQuery atual
 			}
 		}
 
@@ -175,14 +169,10 @@ export async function generateMindMap(
     onProgress(10, 'Analisando conteúdo...');
     mapsStore.setGenerationStatus('analyzing');
 
-    const analysisOpts = await getRouteOptions('analysis');
-    if (!analysisOpts) {
-      onError('Configure sua chave de API nas Configurações antes de gerar um mapa.');
-      return;
-    }
-    const analysisText = await callLLM(
+    const analysisText = await callRoutedLLM(
+			'analysis',
 			[{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
-      { ...analysisOpts, temperature: 0.3 }
+      { temperature: 0.3, maxTokens: 4096 }
     );
 
     const analysis = parseJSON<AnalysisResult>(analysisText);
@@ -191,18 +181,16 @@ export async function generateMindMap(
     // Stage 2 & 3: Mind map + Article (parallel) — cada um pode usar rota própria (custo/benefício)
     mapsStore.setGenerationStatus('generating');
 
-    const [mindmapOpts, articleOpts] = await Promise.all([getRouteOptions('mindmap'), getRouteOptions('article')]);
-    const mindmapOptions = mindmapOpts ?? analysisOpts;
-    const articleOptions = articleOpts ?? analysisOpts;
-
     const [mindMapText, articleText] = await Promise.all([
-      callLLM(
+      callRoutedLLM(
+				'mindmap',
         [{ role: 'user', content: getMindMapPrompt(analysis) }],
-        { ...mindmapOptions, temperature: 0.4, maxTokens: 8000 }
+        { temperature: 0.4, maxTokens: 8000 }
       ),
-      callLLM(
+      callRoutedLLM(
+				'article',
         [{ role: 'user', content: getArticlePrompt(analysis) }],
-        { ...articleOptions, temperature: 0.7, maxTokens: 4000 }
+        { temperature: 0.7, maxTokens: 4000 }
       ),
     ]);
 
@@ -224,16 +212,13 @@ export async function generateMindMap(
 
     // normalizeMindElixirData already ensures ids/topic/children and distributes root children.
 
-    // Stage 4: Image (optional)
+    // Stage 4: Image (optional) — chave Replicate no servidor
     let imageUrl: string | undefined;
-    if (generateImage && settings.replicateApiKey) {
+    if (generateImage) {
       mapsStore.setGenerationStatus('image');
       onProgress(80, 'Gerando imagem ilustrativa...');
       try {
-        imageUrl = await generateReplicateImage(
-          analysis.central_theme,
-          settings.replicateApiKey
-        );
+        imageUrl = await generateReplicateImageViaServer(analysis.central_theme);
       } catch {
         // Image generation is optional, don't fail
         console.warn('Image generation failed, continuing without image');
@@ -317,39 +302,35 @@ function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?
   return `${md}\n`;
 }
 
-async function generateReplicateImage(
-  theme: string,
-  apiKey: string
-): Promise<string> {
-  const prompt = `A beautiful, detailed illustration representing the concept of "${theme}". Digital art, vibrant colors, professional quality.`;
+async function generateReplicateImageViaServer(theme: string): Promise<string> {
+  const token = getAuthToken();
+  if (!token) throw new Error('Login obrigatório');
 
-  const response = await fetch('/api/replicate/v1/models/black-forest-labs/flux-schnell/predictions', {
+  const response = await fetch('/api/image/generate', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Token ${apiKey}`,
+      Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      input: { prompt, width: 1024, height: 576, num_outputs: 1 },
-    }),
+    body: JSON.stringify({ theme }),
   });
 
-  if (!response.ok) throw new Error('Replicate API error');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? 'Erro ao gerar imagem');
 
-  const prediction = await response.json();
-  const predictionId = prediction.id;
+  return data.imageUrl ?? '';
+}
 
-  // Poll for result
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const poll = await fetch(`/api/replicate/v1/predictions/${predictionId}`, {
-      headers: { Authorization: `Token ${apiKey}` },
-    });
-    const result = await poll.json();
-    if (result.status === 'succeeded') return result.output?.[0] ?? '';
-    if (result.status === 'failed') throw new Error('Image generation failed');
+function getAuthToken(): string {
+  try {
+    const raw = localStorage.getItem('mindmap-auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.state?.token ?? '';
+    }
+  } catch {
+    // ignore
   }
-
-  throw new Error('Image generation timed out');
+  return '';
 }
 

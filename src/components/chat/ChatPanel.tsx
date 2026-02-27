@@ -8,10 +8,11 @@ import { UpgradePrompt } from '@/components/monetization/UpgradePrompt';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useUsageStore } from '@/stores/usage-store';
-import { callLLMStream } from '@/services/llm/client';
-import { getRouteOptions } from '@/services/llm/routeLLM';
+import { useAuthStore } from '@/stores/auth-store';
+import { callRoutedLLMStream } from '@/services/llm/routedClient';
 import { getChatSystemPrompt, getSuggestionsPrompt } from '@/services/llm/prompts';
 import { parseJSON } from '@/services/llm/client';
+import { recordChatMessage } from '@/services/api/usageApi';
 import type { SavedMap } from '@/types/mindmap';
 
 interface ChatPanelProps {
@@ -36,6 +37,8 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   const setLoading = useChatStore((s) => s.setLoading);
   const settings = useSettingsStore();
   const checkAction = useUsageStore((s) => s.checkAction);
+  const fetchUsage = useUsageStore((s) => s.fetchUsage);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
 
   const messages = session?.messages ?? [];
 
@@ -50,15 +53,13 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   }, []);
 
   const loadSuggestions = async () => {
-    if (!settings.hasApiKey() || !map.analysis) return;
+    if (!settings.hasAnyApiKey() || !map.analysis) return;
     setLoadingSuggestions(true);
     try {
-      const opts = await getRouteOptions('suggestions');
-      if (!opts) return;
       const prompt = getSuggestionsPrompt(map.title, map.analysis.subtopics);
-      const result = await callLLMStream(
+      const result = await callRoutedLLMStream(
+        'suggestions',
         [{ role: 'user', content: prompt }],
-        opts,
         () => {}
       );
       const parsed = parseJSON<string[]>(result);
@@ -75,17 +76,19 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
   };
 
   const sendMessage = async (content: string) => {
-    if (!content.trim() || isLoading || !settings.hasApiKey()) return;
+    if (!content.trim() || isLoading || !settings.hasAnyApiKey()) return;
 
     // Check chat message limit before sending
-    try {
-      const check = await checkAction('chat_message', { mapId: map.id });
-      if (!check.allowed) {
-        setChatLimitReached(true);
-        return;
+    if (!isAdmin) {
+      try {
+        const check = await checkAction('chat_message', { mapId: map.id });
+        if (!check.allowed) {
+          setChatLimitReached(true);
+          return;
+        }
+      } catch {
+        // Fail open
       }
-    } catch {
-      // Fail open
     }
 
     setInput('');
@@ -112,18 +115,29 @@ export function ChatPanel({ map, onClose }: ChatPanelProps) {
         content: m.content,
       }));
 
-      const chatOpts = await getRouteOptions('chat');
-      if (!chatOpts) return;
       let accumulated = '';
-      await callLLMStream(
+      await callRoutedLLMStream(
+        'chat',
         [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content }],
-        chatOpts,
         (chunk) => {
           accumulated += chunk;
           updateMessage(map.id, assistantId, { content: accumulated });
         }
       );
       updateMessage(map.id, assistantId, { isStreaming: false });
+
+      // Record chat message and refresh usage
+      if (!isAdmin) {
+        try {
+          const token = useAuthStore.getState().token ?? '';
+          if (token) {
+            await recordChatMessage(token, map.id);
+            await fetchUsage();
+          }
+        } catch {
+          // Non-critical: fail silently
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao enviar mensagem';
       updateMessage(map.id, assistantId, { content: `❌ ${msg}`, isStreaming: false });

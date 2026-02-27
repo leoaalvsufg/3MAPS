@@ -152,6 +152,28 @@ export function hashPassword(password) {
 }
 
 /**
+ * Verify an API token and return the associated user, or null if invalid.
+ * Updates last_used_at on success.
+ * @param {string} rawToken — the raw token (e.g. sk-3maps-xxxx)
+ * @param {import('better-sqlite3').Database} db
+ * @returns {{ userId: string, username: string } | null}
+ */
+export function verifyApiToken(rawToken, db) {
+  if (typeof rawToken !== 'string' || !rawToken.trim()) return null;
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const row = db.prepare(`
+    SELECT at.username, u.id as user_id
+    FROM api_tokens at
+    JOIN users u ON u.username = at.username AND u.is_active = 1
+    WHERE at.token_hash = ? AND at.is_active = 1
+      AND (at.expires_at IS NULL OR at.expires_at > datetime('now'))
+  `).get(tokenHash);
+  if (!row) return null;
+  db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE token_hash = ?").run(tokenHash);
+  return { userId: row.user_id, username: row.username };
+}
+
+/**
  * Verify a password against a stored `salt:hash` string.
  * @param {string} password
  * @param {string} stored  — format: `salt:hash`

@@ -35,6 +35,29 @@ export interface AdminStats {
   usersByPlan: Record<string, number>;
   recentRegistrations: Array<{ date: string; count: number }>;
   recentActivity: Record<string, number>;
+  llmUsage?: {
+    estimatedRequestsThisMonth: number;
+    mapsGenerationRequestsThisMonth: number;
+    chatRequestsThisMonth: number;
+    topAccounts: Array<{
+      username: string;
+      plan: string;
+      estimatedLlmRequestsThisMonth: number;
+      mapsUsedThisMonth: number;
+      chatMessagesUsedThisMonth: number;
+    }>;
+  };
+  accountResourceUsage?: Array<{
+    username: string;
+    plan: string;
+    isAdmin: boolean;
+    resources: {
+      mapsPerMonth: { used: number; limit: number; remaining: number };
+      mapsStored: { used: number; limit: number; remaining: number };
+      chatMessagesThisMonth: { used: number; perMapLimit: number };
+      estimatedLlmRequestsThisMonth: number;
+    };
+  }>;
 }
 
 export interface ListUsersResponse {
@@ -244,5 +267,74 @@ export async function updateAdminSettings(settings: AdminSettings): Promise<{ ok
   return adminFetch<{ ok: boolean; updated: string[] }>('/api/admin/settings', {
     method: 'PUT',
     body: JSON.stringify(settings),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// API Tokens API
+// ---------------------------------------------------------------------------
+
+export interface ApiToken {
+  id: string;
+  tokenPrefix: string;
+  username: string;
+  name: string | null;
+  scopes: string[];
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  isActive: boolean;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface ListApiTokensResponse {
+  tokens: ApiToken[];
+}
+
+export interface CreateApiTokenResponse {
+  id: string;
+  username: string;
+  name: string | null;
+  scopes: string[];
+  expiresAt: string | null;
+  token: string;
+  message: string;
+}
+
+export async function listAdminTokens(username?: string): Promise<ListApiTokensResponse> {
+  const qs = username ? new URLSearchParams({ username }) : '';
+  const query = qs ? `?${qs}` : '';
+  return adminFetch<ListApiTokensResponse>(`/api/admin/tokens${query}`);
+}
+
+export async function createAdminToken(data: {
+  username: string;
+  name?: string;
+  scopes?: string[];
+  expiresInDays?: number;
+}): Promise<CreateApiTokenResponse> {
+  return adminFetch<CreateApiTokenResponse>('/api/admin/tokens', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// LLM Credits API
+// ---------------------------------------------------------------------------
+
+export interface LlmCredits {
+  openrouter: { totalCredits: number; totalUsage: number; remaining: number } | null;
+  openai: { status: string; note: string } | null;
+  gemini: { status: string; note: string } | null;
+}
+
+export async function getAdminLlmCredits(): Promise<LlmCredits> {
+  return adminFetch<LlmCredits>('/api/admin/llm-credits');
+}
+
+export async function revokeAdminToken(id: string): Promise<{ message: string }> {
+  return adminFetch<{ message: string }>(`/api/admin/tokens/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }

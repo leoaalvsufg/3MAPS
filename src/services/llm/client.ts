@@ -109,63 +109,175 @@ export async function callLLM(
 }
 
 export function parseJSON<T>(text: string): T {
-  let cleaned = text.trim();
+  const cleaned = text.trim();
 
-  // Strategy 1: Try direct parse first (fastest path)
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    // continue to other strategies
-  }
-
-  // Strategy 2: Extract from markdown code blocks (```json ... ``` or ``` ... ```)
-  // Handles ```json, ```JSON, ```Json, etc.
-  const codeBlockMatch = cleaned.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (codeBlockMatch?.[1]) {
+  function tryParse(input: string): T | null {
     try {
-      return JSON.parse(codeBlockMatch[1].trim()) as T;
+      return JSON.parse(input) as T;
     } catch {
-      // continue
+      return null;
     }
   }
 
-  // Strategy 3: Find the first { or [ and match to the last } or ]
-  const firstBrace = cleaned.indexOf('{');
-  const firstBracket = cleaned.indexOf('[');
-  let startIdx = -1;
-  let endChar = '';
+  function extractBalancedJson(input: string): string | null {
+    const startObj = input.indexOf('{');
+    const startArr = input.indexOf('[');
+    let start = -1;
+    if (startObj >= 0 && (startArr < 0 || startObj < startArr)) start = startObj;
+    else if (startArr >= 0) start = startArr;
+    if (start < 0) return null;
 
-  if (firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)) {
-    startIdx = firstBrace;
-    endChar = '}';
-  } else if (firstBracket >= 0) {
-    startIdx = firstBracket;
-    endChar = ']';
-  }
+    const stack: string[] = [];
+    let inString = false;
+    let escaped = false;
 
-  if (startIdx >= 0) {
-    const lastIdx = cleaned.lastIndexOf(endChar);
-    if (lastIdx > startIdx) {
-      const extracted = cleaned.slice(startIdx, lastIdx + 1);
-      try {
-        return JSON.parse(extracted) as T;
-      } catch {
-        // continue
+    for (let i = start; i < input.length; i += 1) {
+      const ch = input[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if ((ch === '}' || ch === ']') && stack.length > 0) {
+        const expected = stack[stack.length - 1];
+        if (ch === expected) {
+          stack.pop();
+          if (stack.length === 0) return input.slice(start, i + 1);
+        }
       }
     }
+
+    // JSON incompleto (ex.: resposta truncada): tenta fechar estrutura automaticamente.
+    if (stack.length > 0) {
+      return input.slice(start) + stack.reverse().join('');
+    }
+    return null;
   }
 
-  // Strategy 4: Try removing common LLM artifacts (trailing commas, comments)
+  function repairTruncatedJson(input: string): string | null {
+    const startObj = input.indexOf('{');
+    const startArr = input.indexOf('[');
+    let start = -1;
+    if (startObj >= 0 && (startArr < 0 || startObj < startArr)) start = startObj;
+    else if (startArr >= 0) start = startArr;
+    if (start < 0) return null;
+
+    let fragment = input.slice(start);
+
+    // Remove trailing incomplete key-value that ends with just a key or partial value
+    fragment = fragment.replace(/,\s*"[^"]*"\s*:\s*"?[^"{}[\]]*$/s, '');
+
+    // If we're inside an open string, close it
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < fragment.length; i += 1) {
+      const ch = fragment[i];
+      if (inStr) {
+        if (esc) { esc = false; }
+        else if (ch === '\\') { esc = true; }
+        else if (ch === '"') { inStr = false; }
+      } else if (ch === '"') {
+        inStr = true;
+      }
+    }
+    if (inStr) {
+      fragment += '"';
+    }
+
+    // Remove trailing comma if present (after closing the string)
+    fragment = fragment.replace(/,\s*$/, '');
+
+    // Now close remaining brackets/braces
+    const stack2: string[] = [];
+    let inStr2 = false;
+    let esc2 = false;
+    for (let i = 0; i < fragment.length; i += 1) {
+      const ch = fragment[i];
+      if (inStr2) {
+        if (esc2) { esc2 = false; }
+        else if (ch === '\\') { esc2 = true; }
+        else if (ch === '"') { inStr2 = false; }
+        continue;
+      }
+      if (ch === '"') { inStr2 = true; continue; }
+      if (ch === '{') stack2.push('}');
+      else if (ch === '[') stack2.push(']');
+      else if ((ch === '}' || ch === ']') && stack2.length > 0) {
+        if (ch === stack2[stack2.length - 1]) stack2.pop();
+      }
+    }
+    if (stack2.length > 0) {
+      fragment += stack2.reverse().join('');
+    }
+
+    return fragment;
+  }
+
+  // 1) Parse direto
+  const direct = tryParse(cleaned);
+  if (direct !== null) return direct;
+
+  // 2) Code block fechado
+  const codeBlockMatch = cleaned.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch?.[1]) {
+    const fromCodeBlock = tryParse(codeBlockMatch[1].trim());
+    if (fromCodeBlock !== null) return fromCodeBlock;
+  }
+
+  // 3) Code block sem fechamento (comum em truncamento)
+  const openCodeFence = cleaned.match(/```(?:json|JSON)?\s*\n?([\s\S]*)$/);
+  if (openCodeFence?.[1]) {
+    const candidate = openCodeFence[1].trim();
+    const parsed = tryParse(candidate);
+    if (parsed !== null) return parsed;
+    const balanced = extractBalancedJson(candidate);
+    if (balanced) {
+      const parsedBalanced = tryParse(balanced);
+      if (parsedBalanced !== null) return parsedBalanced;
+    }
+  }
+
+  // 4) Extrai JSON balanceado do texto livre
+  const balanced = extractBalancedJson(cleaned);
+  if (balanced) {
+    const parsedBalanced = tryParse(balanced);
+    if (parsedBalanced !== null) return parsedBalanced;
+  }
+
+  // 5) Limpeza de artefatos comuns
   const withoutComments = cleaned
-    .replace(/\/\/[^\n]*/g, '')  // remove single-line comments
-    .replace(/,\s*([}\]])/g, '$1');  // remove trailing commas
-  try {
-    return JSON.parse(withoutComments) as T;
-  } catch {
-    // final fallback
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/,\s*([}\]])/g, '$1');
+  const parsedCleaned = tryParse(withoutComments);
+  if (parsedCleaned !== null) return parsedCleaned;
+
+  // 6) Reparo agressivo de JSON truncado (fecha strings abertas + estrutura)
+  const repaired = repairTruncatedJson(cleaned);
+  if (repaired) {
+    const parsedRepaired = tryParse(repaired);
+    if (parsedRepaired !== null) return parsedRepaired;
+
+    // Tenta também limpar trailing commas no reparado
+    const repairedClean = repaired
+      .replace(/,\s*([}\]])/g, '$1');
+    const parsedRepairedClean = tryParse(repairedClean);
+    if (parsedRepairedClean !== null) return parsedRepairedClean;
   }
 
-  throw new Error(`Não foi possível extrair JSON válido da resposta da LLM. Resposta: ${cleaned.slice(0, 200)}...`);
+  throw new Error(`Não foi possível extrair JSON válido da resposta da LLM. Resposta: ${cleaned.slice(0, 300)}...`);
 }
 
 export async function callLLMStream(

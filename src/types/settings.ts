@@ -18,6 +18,8 @@ export interface SettingsState {
   replicateApiKey: string;
   provider: LLMProvider;
   selectedModel: string;
+  /** Lista de modelos habilitados para roteamento por provedor (inclui modelos manuais). */
+  providerModels: Record<LLMProvider, string[]>;
   theme: ThemeMode;
   generateImages: boolean;
   language: string;

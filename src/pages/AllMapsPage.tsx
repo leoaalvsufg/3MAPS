@@ -20,11 +20,12 @@ function MapListRow({ map }: { map: SavedMap }) {
   const navigate = useNavigate();
   const deleteMap = useMapsStore((s) => s.deleteMap);
   const template = TEMPLATES.find((t) => t.id === map.template);
+  const displayTitle = map.ownerPath ?? map.title;
 
   return (
     <div
       role="article"
-      aria-label={`Mapa mental: ${map.title}`}
+      aria-label={`Mapa mental: ${displayTitle}`}
       onClick={() => navigate(`/map/${map.id}`)}
       className="group flex items-center gap-4 px-4 py-3 bg-card border border-border rounded-xl cursor-pointer hover:border-primary/50 hover:shadow-sm transition-all"
     >
@@ -35,7 +36,7 @@ function MapListRow({ map }: { map: SavedMap }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <h3 className="font-semibold text-sm text-foreground truncate">{map.title}</h3>
+        <h3 className="font-semibold text-sm text-foreground truncate">{displayTitle}</h3>
         <p className="text-xs text-muted-foreground truncate mt-0.5">{map.query}</p>
       </div>
 
@@ -67,10 +68,10 @@ function MapListRow({ map }: { map: SavedMap }) {
         size="sm"
         onClick={(e) => {
           e.stopPropagation();
-          if (confirm(`Excluir "${map.title}"?`)) deleteMap(map.id);
+          if (confirm(`Excluir "${displayTitle}"?`)) deleteMap(map.id);
         }}
         className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground shrink-0"
-        aria-label={`Excluir mapa "${map.title}"`}
+        aria-label={`Excluir mapa "${displayTitle}"`}
       >
         ✕
       </Button>
@@ -95,6 +96,7 @@ export function AllMapsPage() {
   const viewMode = useUIStore((s) => s.viewMode);
   const setViewMode = useUIStore((s) => s.setViewMode);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
 
   // Sync maps from server when page mounts (if authenticated)
   useEffect(() => {
@@ -141,7 +143,7 @@ export function AllMapsPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Map className="h-5 w-5 text-primary" />
-            <h1 className="text-xl font-bold">Meus Mapas</h1>
+            <h1 className="text-xl font-bold">{isAdmin ? 'Todos os Mapas' : 'Meus Mapas'}</h1>
             <span className="text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
               {maps.length}
             </span>

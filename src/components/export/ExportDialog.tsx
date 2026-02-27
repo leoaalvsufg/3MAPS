@@ -20,6 +20,7 @@ import {
 import type { SavedMap } from '@/types/mindmap';
 import type MindElixir from 'mind-elixir';
 import { useUsageStore } from '@/stores/usage-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { PLANS } from '@/lib/plans';
 import { UpgradePrompt } from '@/components/monetization/UpgradePrompt';
 
@@ -69,8 +70,11 @@ export function ExportDialog({ open, onClose, map, mindElixirInstance, exportTar
   const [lockedFormat, setLockedFormat] = useState<string>('');
 
   const limits = useUsageStore((s) => s.limits);
-  // Determine allowed formats: use server-fetched limits if available, else fall back to free plan
-  const allowedFormats = limits?.exportFormats ?? PLANS.free.exportFormats;
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
+  // Admin is enterprise+ on UI, even if usage limits are not loaded yet.
+  const allowedFormats = isAdmin
+    ? PLANS.admin.exportFormats
+    : (limits?.exportFormats ?? PLANS.free.exportFormats);
 
   const handleExport = async (format: ExportFormat) => {
     // Check if format is allowed for the user's plan

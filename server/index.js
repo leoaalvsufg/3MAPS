@@ -8,13 +8,13 @@ import crypto from 'node:crypto';
 
 import { deleteMap, getMap, listMaps, putMap, validateMapId, validateUsername, getDataDir } from './storage.js';
 import { checkRateLimit } from './rateLimit.js';
-import { generateToken, verifyToken } from './auth.js';
-import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getOrCreateUserFromFirebase, migrateFilesystemUsers } from './users.js';
+import { generateToken, verifyToken, verifyApiToken } from './auth.js';
+import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser } from './users.js';
 import { verifyFirebaseIdToken } from './firebaseAdmin.js';
 import { getUsage, incrementMapCount, incrementChatCount } from './usage.js';
 import { logger } from './logger.js';
 import { scheduleBackups, runBackup } from './backup.js';
-import { sendPasswordResetEmail } from './email.js';
+import { sendPasswordResetEmail, sendMagicLinkEmail } from './email.js';
 import {
   isAdminUser,
   handleListUsers,
@@ -30,7 +30,10 @@ import {
   handleGetSettings,
   handleUpdateSettings,
 } from './admin.js';
-import { logActivity, checkAndNotify } from './activity.js';
+import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
+import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
+import { getDb } from './db.js';
+import { getOpenApiSpec } from './openapi.js';
 
 // ---------------------------------------------------------------------------
 // Error recovery: uncaught exceptions / unhandled rejections
@@ -68,7 +71,7 @@ const PLAN_LIMITS = {
     imageGeneration: false,
     chatEnabled: true,
     chatMessagesPerMap: 5,
-    maxMapsStored: 20,
+    maxMapsStored: 5,
     canConfigureApiKeys: false,
   },
   premium: {
@@ -346,19 +349,24 @@ function sendText(res, status, text, extraHeaders = {}) {
 // Body reading with size limit
 // ---------------------------------------------------------------------------
 
-async function readJsonBody(req) {
+async function readRawBody(req) {
   const chunks = [];
   let totalBytes = 0;
-
   for await (const chunk of req) {
     totalBytes += chunk.length;
     if (totalBytes > MAX_BODY_BYTES) {
-      return { ok: false, error: `Request body exceeds the ${MAX_BODY_BYTES / 1024 / 1024} MB limit` };
+      return { ok: false, error: `Request body exceeds the ${MAX_BODY_BYTES / 1024 / 1024} MB limit`, raw: null };
     }
     chunks.push(chunk);
   }
-
   const raw = Buffer.concat(chunks).toString('utf8');
+  return { ok: true, raw };
+}
+
+async function readJsonBody(req) {
+  const result = await readRawBody(req);
+  if (!result.ok) return result;
+  const raw = result.raw;
   if (!raw) return { ok: true, body: null };
   try {
     return { ok: true, body: JSON.parse(raw) };
@@ -373,7 +381,7 @@ async function readJsonBody(req) {
 
 /**
  * Extract the authenticated user from the request's Authorization header.
- * Falls back to { userId: 'local', username: 'local' } for backward compatibility.
+ * Accepts JWT (Bearer) or API token. Falls back to { userId: 'local', username: 'local' } for backward compatibility.
  * @param {http.IncomingMessage} req
  * @returns {Promise<{ userId: string, username: string }>}
  */
@@ -383,8 +391,144 @@ async function getAuthUser(req) {
     const token = authHeader.slice(7);
     const payload = await verifyToken(token);
     if (payload) return payload;
+    const apiUser = verifyApiToken(token, getDb());
+    if (apiUser) return apiUser;
   }
   return { userId: 'local', username: 'local' };
+}
+
+async function findMapOwnerForAdmin(mapId, preferredUsername) {
+  const candidates = [];
+  if (preferredUsername && preferredUsername !== 'local') candidates.push(preferredUsername);
+
+  try {
+    const { users } = await listUsers({ limit: 10_000, offset: 0, search: '' });
+    for (const u of users) {
+      if (u.username !== preferredUsername) candidates.push(u.username);
+    }
+  } catch {
+    // ignore and fall back to preferred username only
+  }
+
+  for (const username of candidates) {
+    const existing = await getMap(username, mapId);
+    if (existing) return username;
+  }
+  return null;
+}
+
+async function listMapsForAdmin(adminUsername) {
+  const all = [];
+  const { users } = await listUsers({ limit: 10_000, offset: 0, search: '' });
+  for (const u of users) {
+    const userMaps = await listMaps(u.username);
+    for (const m of userMaps) {
+      all.push({
+        ...m,
+        ownerUsername: u.username,
+        ownerPath: `${u.username}/${m.title}`,
+      });
+    }
+  }
+
+  // Ensure admin's own maps are included even if user listing failed for some reason
+  if (!all.some((m) => m.ownerUsername === adminUsername)) {
+    try {
+      const own = await listMaps(adminUsername);
+      for (const m of own) {
+        all.push({
+          ...m,
+          ownerUsername: adminUsername,
+          ownerPath: `${adminUsername}/${m.title}`,
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  return all;
+}
+
+function resolveAppBaseUrl(req) {
+  const configured = String(getAdminSetting('app_url', '') ?? '').trim();
+  if (configured && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/, '');
+  }
+
+  const host = req.headers.host ?? 'localhost:8787';
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = typeof forwardedProto === 'string'
+    ? forwardedProto.split(',')[0].trim()
+    : (IS_PRODUCTION ? 'https' : 'http');
+  return `${proto}://${host}`;
+}
+
+function getStripePriceId(plan) {
+  if (plan === 'premium') {
+    return String(
+      getAdminSetting('stripe_price_premium', process.env.STRIPE_PRICE_PREMIUM ?? '') ?? ''
+    ).trim();
+  }
+  if (plan === 'enterprise') {
+    return String(
+      getAdminSetting('stripe_price_enterprise', process.env.STRIPE_PRICE_ENTERPRISE ?? '') ?? ''
+    ).trim();
+  }
+  return '';
+}
+
+async function createStripeCheckoutSession({
+  secretKey,
+  priceId,
+  plan,
+  username,
+  email,
+  successUrl,
+  cancelUrl,
+}) {
+  const params = new URLSearchParams();
+  params.set('mode', 'subscription');
+  params.set('line_items[0][price]', priceId);
+  params.set('line_items[0][quantity]', '1');
+  params.set('success_url', successUrl);
+  params.set('cancel_url', cancelUrl);
+  params.set('allow_promotion_codes', 'true');
+  params.set('metadata[username]', username);
+  params.set('metadata[targetPlan]', plan);
+  if (email) params.set('customer_email', email);
+
+  const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${secretKey}`,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  const raw = await response.text();
+  let json = null;
+  try {
+    json = raw ? JSON.parse(raw) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok || !json?.url) {
+    let stripeError = json?.error?.message ?? `Stripe returned ${response.status}`;
+    if (typeof stripeError === 'string' && stripeError.toLowerCase().includes('no such price')) {
+      if (stripeError.includes('prod_')) {
+        stripeError = 'Você configurou um Product ID (prod_...). Use um Price ID (price_...). No Stripe: Produtos → seu produto → Preços → copie o ID do preço.';
+      } else {
+        stripeError = 'Price ID inválido ou inexistente no Stripe. Use o ID do preço (price_xxx), não o do produto. Stripe → Produtos → Preços → copie o ID.';
+      }
+    }
+    throw new Error(String(stripeError));
+  }
+
+  return { url: String(json.url), id: String(json.id ?? '') };
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +674,51 @@ const server = http.createServer(async (req, res) => {
       return await sendJson(res, 200, health, corsHeaders ?? {});
     }
 
-    // Rate limiting
-    if (!checkRateLimit(req, res)) return;
+    // OpenAPI spec (public)
+    if (url.pathname === '/api/docs/openapi.json' && req.method === 'GET') {
+      const baseUrl = resolveAppBaseUrl(req);
+      const spec = getOpenApiSpec(baseUrl);
+      return await sendJson(res, 200, spec, corsHeaders ?? {});
+    }
+
+    // Swagger UI (public)
+    if (url.pathname === '/api/docs' && req.method === 'GET') {
+      const specUrl = `${resolveAppBaseUrl(req)}/api/docs/openapi.json`;
+      const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3Maps API — Documentação</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "${specUrl.replace(/"/g, '\\"')}",
+      dom_id: '#swagger-ui',
+    });
+  </script>
+</body>
+</html>`;
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        ...getSecurityHeaders(),
+        ...(corsHeaders ?? {}),
+      });
+      res.end(html);
+      return;
+    }
+
+    // Rate limiting — only applied to API routes, not static file serving.
+    // Static assets (JS, CSS, fonts, images) must NOT count against the per-IP
+    // request budget, otherwise a single page load (~30-50 assets) would exhaust
+    // the limit before any real API call is made.
+    if (url.pathname.startsWith('/api/')) {
+      if (!checkRateLimit(req, res)) return;
+    }
 
     // -----------------------------------------------------------------------
     // Auth routes
@@ -566,14 +753,15 @@ const server = http.createServer(async (req, res) => {
       const parsed = await readJsonBody(req);
       if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
       const { username, password } = parsed.body ?? {};
+      const login = (username ?? parsed.body?.login ?? '').toString().trim();
 
-      if (!username || !password) {
-        return await sendJson(res, 400, { error: 'Username and password are required' }, corsHeaders ?? {});
+      if (!login || !password) {
+        return await sendJson(res, 400, { error: 'E-mail ou nome de usuário e senha são obrigatórios' }, corsHeaders ?? {});
       }
 
-      const user = await validateCredentials(username, password);
+      const user = await validateCredentials(login, password);
       if (!user) {
-        logActivity({ username, action: 'login_failed', ip: req.socket?.remoteAddress });
+        logActivity({ username: login, action: 'login_failed', ip: req.socket?.remoteAddress });
         // Check for suspicious activity after failed login
         setTimeout(() => { try { checkAndNotify(); } catch {} }, 0);
         return await sendJson(res, 401, { error: 'Invalid username or password' }, corsHeaders ?? {});
@@ -640,7 +828,7 @@ const server = http.createServer(async (req, res) => {
           userId: payload.userId,
           username: payload.username,
           isAdmin: payload.isAdmin ?? false,
-          plan: freshUser?.plan ?? 'free',
+          plan: (freshUser?.isAdmin ? 'admin' : (freshUser?.plan ?? 'free')),
         },
       }, corsHeaders ?? {});
     }
@@ -747,6 +935,116 @@ const server = http.createServer(async (req, res) => {
     }
 
     // -----------------------------------------------------------------------
+    // Magic link — request link (envia e-mail)
+    // POST /api/auth/magic-link  { email ou username }
+    // -----------------------------------------------------------------------
+
+    if (url.pathname === '/api/auth/magic-link' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { email, username: usernameInput } = parsed.body ?? {};
+      const login = (email ?? usernameInput ?? '').trim();
+      if (!login) {
+        return await sendJson(res, 400, { error: 'Informe o e-mail ou nome de usuário.' }, corsHeaders ?? {});
+      }
+
+      try {
+        const isEmail = login.includes('@');
+        const profile = isEmail ? await getUserByEmail(login) : await getUser(login);
+        if (!profile) {
+          return await sendJson(res, 200, { message: 'Se este e-mail ou usuário existir, você receberá o link em breve.' }, corsHeaders ?? {});
+        }
+        const userEmail = profile.email?.trim().toLowerCase();
+        if (!userEmail) {
+          return await sendJson(res, 400, { error: 'Sua conta não possui e-mail cadastrado. Use a senha para entrar ou cadastre um e-mail.' }, corsHeaders ?? {});
+        }
+        if (!profile.isActive) {
+          return await sendJson(res, 200, { message: 'Se este e-mail ou usuário existir, você receberá o link em breve.' }, corsHeaders ?? {});
+        }
+
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+        const tokenId = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
+
+        const db = (await import('./db.js')).getDb();
+        db.prepare('UPDATE magic_link_tokens SET used = 1 WHERE username = ? AND used = 0').run(profile.username);
+        db.prepare(`
+          INSERT INTO magic_link_tokens (id, username, token_hash, expires_at) VALUES (?, ?, ?, ?)
+        `).run(tokenId, profile.username, tokenHash, expiresAt);
+
+        sendMagicLinkEmail({
+          to: userEmail,
+          username: profile.username,
+          token: rawToken,
+        }).catch((err) => {
+          logger.error('Failed to send magic link email', { error: String(err) });
+        });
+
+        return await sendJson(res, 200, {
+          message: 'Se este e-mail ou usuário existir, você receberá o link em breve. Verifique sua caixa de entrada e spam.',
+        }, corsHeaders ?? {});
+      } catch (err) {
+        logger.error('Magic link request error', { error: String(err) });
+        return await sendJson(res, 500, { error: 'Erro ao enviar o link. Tente novamente.' }, corsHeaders ?? {});
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Magic link — verificar token e retornar JWT
+    // POST /api/auth/magic-link/verify  { token }
+    // -----------------------------------------------------------------------
+
+    if (url.pathname === '/api/auth/magic-link/verify' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { token } = parsed.body ?? {};
+      if (!token || typeof token !== 'string') {
+        return await sendJson(res, 400, { error: 'Token inválido' }, corsHeaders ?? {});
+      }
+
+      try {
+        const db = (await import('./db.js')).getDb();
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const tokenRow = db.prepare(`
+          SELECT * FROM magic_link_tokens
+          WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')
+        `).get(tokenHash);
+
+        if (!tokenRow) {
+          return await sendJson(res, 400, { error: 'Link inválido ou expirado. Solicite um novo link.' }, corsHeaders ?? {});
+        }
+
+        db.prepare('UPDATE magic_link_tokens SET used = 1 WHERE id = ?').run(tokenRow.id);
+
+        const userProfile = await getUser(tokenRow.username);
+        if (!userProfile || !userProfile.isActive) {
+          return await sendJson(res, 400, { error: 'Conta indisponível.' }, corsHeaders ?? {});
+        }
+
+        const jwt = await generateToken({
+          userId: userProfile.userId,
+          username: userProfile.username,
+          isAdmin: userProfile.isAdmin ?? false,
+        });
+
+        logger.info('Magic link login successful', { username: userProfile.username });
+        return await sendJson(res, 200, {
+          token: jwt,
+          user: {
+            userId: userProfile.userId,
+            username: userProfile.username,
+            isAdmin: userProfile.isAdmin ?? false,
+            plan: userProfile.plan ?? 'free',
+          },
+        }, corsHeaders ?? {});
+      } catch (err) {
+        logger.error('Magic link verify error', { error: String(err) });
+        return await sendJson(res, 500, { error: 'Erro ao validar o link. Tente novamente.' }, corsHeaders ?? {});
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Admin routes — require isAdmin === true in JWT
     // -----------------------------------------------------------------------
 
@@ -820,6 +1118,91 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // GET /api/admin/llm-credits — consultar créditos/saldo dos provedores
+      if (url.pathname === '/api/admin/llm-credits' && req.method === 'GET') {
+        try {
+          const credits = await getLlmCredits();
+          return await sendJson(res, 200, credits, corsHeaders ?? {});
+        } catch (e) {
+          return await sendJson(res, 500, { error: e instanceof Error ? e.message : 'Erro ao consultar créditos' }, corsHeaders ?? {});
+        }
+      }
+
+      // POST /api/admin/tokens — create API token for a user
+      if (url.pathname === '/api/admin/tokens' && req.method === 'POST') {
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+        const { username, name, scopes, expiresInDays } = parsed.body ?? {};
+        if (!username || typeof username !== 'string') {
+          return await sendJson(res, 400, { error: 'username é obrigatório' }, corsHeaders ?? {});
+        }
+        const userProfile = await getUser(username.trim());
+        if (!userProfile) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
+        const scopeList = Array.isArray(scopes) ? scopes : (typeof scopes === 'string' ? [scopes] : ['maps:read', 'maps:write', 'llm:complete', 'usage:read']);
+        const rawToken = `sk-3maps-${crypto.randomBytes(24).toString('hex')}`;
+        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+        const tokenPrefix = rawToken.slice(0, 15);
+        const tokenId = crypto.randomUUID();
+        const expiresAt = typeof expiresInDays === 'number' && expiresInDays > 0
+          ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+          : null;
+        const db = getDb();
+        db.prepare(`
+          INSERT INTO api_tokens (id, token_hash, token_prefix, username, name, scopes, expires_at, created_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(tokenId, tokenHash, tokenPrefix, userProfile.username, (name || '').trim() || null, JSON.stringify(scopeList), expiresAt, authUser.username);
+        logActivity({ username: authUser.username, action: 'admin_create_api_token', details: { forUser: userProfile.username } });
+        return await sendJson(res, 201, {
+          id: tokenId,
+          username: userProfile.username,
+          name: (name || '').trim() || null,
+          scopes: scopeList,
+          expiresAt,
+          token: rawToken,
+          message: 'Token criado. Guarde-o: ele não será exibido novamente.',
+        }, corsHeaders ?? {});
+      }
+
+      // GET /api/admin/tokens — list API tokens
+      if (url.pathname === '/api/admin/tokens' && req.method === 'GET') {
+        const username = url.searchParams.get('username') ?? '';
+        const db = getDb();
+        const rows = username.trim()
+          ? db.prepare(`
+              SELECT id, token_prefix, username, name, scopes, expires_at, last_used_at, is_active, created_at, created_by
+              FROM api_tokens WHERE username = ? ORDER BY created_at DESC
+            `).all(username.trim())
+          : db.prepare(`
+              SELECT id, token_prefix, username, name, scopes, expires_at, last_used_at, is_active, created_at, created_by
+              FROM api_tokens ORDER BY created_at DESC
+            `).all();
+        const tokens = rows.map((r) => ({
+          id: r.id,
+          tokenPrefix: r.token_prefix,
+          username: r.username,
+          name: r.name,
+          scopes: JSON.parse(r.scopes || '[]'),
+          expiresAt: r.expires_at,
+          lastUsedAt: r.last_used_at,
+          isActive: r.is_active === 1,
+          createdAt: r.created_at,
+          createdBy: r.created_by,
+        }));
+        return await sendJson(res, 200, { tokens }, corsHeaders ?? {});
+      }
+
+      // DELETE /api/admin/tokens/:id — revoke token
+      const tokenDeleteMatch = url.pathname.match(/^\/api\/admin\/tokens\/([^/]+)$/);
+      if (tokenDeleteMatch && req.method === 'DELETE') {
+        const tokenId = tokenDeleteMatch[1];
+        const db = getDb();
+        const row = db.prepare('SELECT username FROM api_tokens WHERE id = ?').get(tokenId);
+        if (!row) return await sendJson(res, 404, { error: 'Token não encontrado' }, corsHeaders ?? {});
+        db.prepare('UPDATE api_tokens SET is_active = 0 WHERE id = ?').run(tokenId);
+        logActivity({ username: authUser.username, action: 'admin_revoke_api_token', details: { tokenId, forUser: row.username } });
+        return await sendJson(res, 200, { message: 'Token revogado' }, corsHeaders ?? {});
+      }
+
       // Routes with :username param
       const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)(\/.*)?$/);
       if (adminUserMatch) {
@@ -874,11 +1257,100 @@ const server = http.createServer(async (req, res) => {
     }
 
     // -----------------------------------------------------------------------
+    // LLM proxy (chaves no servidor, usuário não configura)
+    // -----------------------------------------------------------------------
+
+    if (url.pathname === '/api/llm/status' && req.method === 'GET') {
+      const configured = hasAnyLlmKey();
+      return await sendJson(res, 200, { configured }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/llm/options' && req.method === 'GET') {
+      const options = getAvailableLlmOptions();
+      return await sendJson(res, 200, { options }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/llm/complete' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      if (!hasAnyLlmKey()) {
+        return await sendJson(res, 503, {
+          error: 'Configure as chaves de API no painel administrativo antes de usar a geração de mapas.',
+        }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error ?? 'Invalid JSON' }, corsHeaders ?? {});
+      const { provider, model, messages, temperature, maxTokens, stream } = parsed.body ?? {};
+      if (!provider || !model || !Array.isArray(messages)) {
+        return await sendJson(res, 400, { error: 'provider, model e messages são obrigatórios' }, corsHeaders ?? {});
+      }
+      try {
+        if (stream === true) {
+          res.writeHead(200, {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            'connection': 'keep-alive',
+            ...getSecurityHeaders(),
+            ...(corsHeaders ?? {}),
+          });
+          for await (const chunk of proxyLlmStream({
+            provider,
+            model,
+            messages,
+            temperature: temperature ?? 0.7,
+            maxTokens: maxTokens ?? 4096,
+          })) {
+            res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        const content = await proxyLlmComplete({
+          provider,
+          model,
+          messages,
+          temperature: temperature ?? 0.7,
+          maxTokens: maxTokens ?? 4096,
+        });
+        return await sendJson(res, 200, { content }, corsHeaders ?? {});
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
+      }
+    }
+
+    if (url.pathname === '/api/image/generate' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error ?? 'Invalid JSON' }, corsHeaders ?? {});
+      const theme = parsed.body?.theme;
+      if (!theme || typeof theme !== 'string') {
+        return await sendJson(res, 400, { error: 'theme é obrigatório' }, corsHeaders ?? {});
+      }
+      try {
+        const imageUrl = await proxyReplicateImage(theme);
+        return await sendJson(res, 200, { imageUrl }, corsHeaders ?? {});
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Usage routes
     // -----------------------------------------------------------------------
 
     if (url.pathname === '/api/usage' && req.method === 'GET') {
       const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
       const username = authUser.username;
       const usage = await getUsage(username);
       // Get plan from user profile (falls back to 'free' for unauthenticated)
@@ -886,7 +1358,7 @@ const server = http.createServer(async (req, res) => {
       if (username !== 'local') {
         try {
           const profile = await getUser(username);
-          planId = profile?.plan ?? 'free';
+          planId = profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free');
         } catch {
           planId = 'free';
         }
@@ -901,13 +1373,16 @@ const server = http.createServer(async (req, res) => {
       const { action, mapId, format } = parsed.body ?? {};
 
       const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
       const username = authUser.username;
 
       let planId = 'free';
       if (username !== 'local') {
         try {
           const profile = await getUser(username);
-          planId = profile?.plan ?? 'free';
+          planId = profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free');
         } catch {
           planId = 'free';
         }
@@ -916,6 +1391,17 @@ const server = http.createServer(async (req, res) => {
       const usage = await getUsage(username);
 
       if (action === 'create_map') {
+        if (limits.maxMapsStored !== -1) {
+          const allMaps = await listMaps(username);
+          const remainingStorage = limits.maxMapsStored - allMaps.length;
+          if (remainingStorage <= 0) {
+            return await sendJson(res, 200, {
+              allowed: false,
+              reason: `Limite de ${limits.maxMapsStored} mapas no total atingido. Faça upgrade para continuar.`,
+              remaining: 0,
+            }, corsHeaders ?? {});
+          }
+        }
         if (limits.mapsPerMonth === -1) {
           return await sendJson(res, 200, { allowed: true }, corsHeaders ?? {});
         }
@@ -961,6 +1447,189 @@ const server = http.createServer(async (req, res) => {
       return await sendJson(res, 400, { error: 'Unknown action' }, corsHeaders ?? {});
     }
 
+    if (url.pathname === '/api/usage/chat-message' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const { mapId } = parsed.body ?? {};
+      if (!mapId || typeof mapId !== 'string' || !mapId.trim()) {
+        return await sendJson(res, 400, { error: 'mapId é obrigatório' }, corsHeaders ?? {});
+      }
+      try {
+        validateMapId(mapId.trim());
+      } catch (e) {
+        return await sendJson(res, 400, { error: e instanceof Error ? e.message : 'mapId inválido' }, corsHeaders ?? {});
+      }
+
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+
+      try {
+        await incrementChatCount(authUser.username, mapId.trim());
+        return await sendJson(res, 200, { ok: true }, corsHeaders ?? {});
+      } catch (err) {
+        logger.error('incrementChatCount failed', {
+          username: authUser.username,
+          mapId: mapId.trim(),
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return await sendJson(res, 500, { error: 'Erro ao registrar mensagem' }, corsHeaders ?? {});
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Billing routes
+    // -----------------------------------------------------------------------
+
+    if (url.pathname === '/api/billing/webhook' && req.method === 'POST') {
+      const rawResult = await readRawBody(req);
+      if (!rawResult.ok) {
+        return await sendJson(res, 400, { error: rawResult.error }, corsHeaders ?? {});
+      }
+      const rawBody = rawResult.raw ?? '';
+      const sigHeader = req.headers['stripe-signature'] ?? '';
+      const webhookSecret = String(
+        getAdminSetting('stripe_webhook_secret', process.env.STRIPE_WEBHOOK_SECRET ?? '') ?? ''
+      ).trim();
+
+      if (!webhookSecret) {
+        logger.warn('Stripe webhook received but stripe_webhook_secret not configured');
+        return await sendJson(res, 500, { error: 'Webhook não configurado' }, corsHeaders ?? {});
+      }
+
+      let event;
+      try {
+        const parts = {};
+        for (const part of sigHeader.split(',')) {
+          const [k, v] = part.split('=').map((s) => s.trim());
+          if (k && v) parts[k] = v;
+        }
+        const timestamp = parts.t;
+        const sig = parts.v1;
+        if (!timestamp || !sig) {
+          throw new Error('Stripe-Signature inválido');
+        }
+        const payloadToSign = timestamp + '.' + rawBody;
+        const expectedSig = crypto
+          .createHmac('sha256', webhookSecret)
+          .update(payloadToSign)
+          .digest('hex');
+        const sigBuffer = Buffer.from(sig, 'hex');
+        const expectedBuffer = Buffer.from(expectedSig, 'hex');
+        if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+          throw new Error('Assinatura inválida');
+        }
+        event = JSON.parse(rawBody);
+      } catch (err) {
+        logger.warn('Stripe webhook signature verification failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return await sendJson(res, 400, { error: 'Webhook signature inválida' }, corsHeaders ?? {});
+      }
+
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data?.object;
+        const username = session?.metadata?.username;
+        const targetPlan = (session?.metadata?.targetPlan ?? '').toLowerCase();
+        if (username && (targetPlan === 'premium' || targetPlan === 'enterprise')) {
+          try {
+            const profile = await getUser(username);
+            if (profile && !profile.isAdmin) {
+              await updateUser(username, { plan: targetPlan });
+              logActivity({ username, action: 'billing_plan_upgraded', details: { plan: targetPlan } });
+              logger.info('User plan upgraded via Stripe webhook', { username, plan: targetPlan });
+            }
+          } catch (err) {
+            logger.error('Failed to upgrade user plan from webhook', {
+              username,
+              plan: targetPlan,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            return await sendJson(res, 500, { error: 'Erro ao atualizar plano' }, corsHeaders ?? {});
+          }
+        }
+      }
+
+      return await sendJson(res, 200, { received: true }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/billing/checkout' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório para iniciar pagamento' }, corsHeaders ?? {});
+      }
+
+      const requestedPlan = String(parsed.body?.plan ?? 'premium').toLowerCase();
+      if (requestedPlan !== 'premium' && requestedPlan !== 'enterprise') {
+        return await sendJson(res, 400, { error: 'Plano inválido para checkout' }, corsHeaders ?? {});
+      }
+
+      const profile = await getUser(authUser.username);
+      if (!profile) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
+      if (profile.isAdmin) {
+        return await sendJson(res, 400, { error: 'Conta admin não requer upgrade de pagamento' }, corsHeaders ?? {});
+      }
+
+      const stripeSecretKey = String(
+        getAdminSetting('stripe_secret_key', process.env.STRIPE_SECRET_KEY ?? '') ?? ''
+      ).trim();
+      if (!stripeSecretKey) {
+        return await sendJson(res, 400, { error: 'Stripe não configurado: chave secreta ausente' }, corsHeaders ?? {});
+      }
+
+      const stripePriceId = getStripePriceId(requestedPlan);
+      if (!stripePriceId) {
+        return await sendJson(res, 400, { error: `Stripe não configurado: price ID do plano ${requestedPlan} ausente` }, corsHeaders ?? {});
+      }
+      if (stripePriceId.startsWith('prod_')) {
+        return await sendJson(res, 400, {
+          error: `Você configurou um Product ID (prod_...). O campo exige um Price ID (price_...). No Stripe: Produtos → seu produto → Preços → copie o ID do preço (começa com price_).`,
+        }, corsHeaders ?? {});
+      }
+      if (!stripePriceId.startsWith('price_')) {
+        return await sendJson(res, 400, {
+          error: `Price ID inválido. Use o ID do preço do Stripe (ex: price_1ABC123xyz), não o nome do plano nem o Product ID. Stripe → Produtos → Preços → copie o ID.`,
+        }, corsHeaders ?? {});
+      }
+
+      const baseUrl = resolveAppBaseUrl(req);
+      const successUrl = `${baseUrl}/thank-you?plan=${encodeURIComponent(requestedPlan)}`;
+      const cancelUrl = `${baseUrl}/settings?billing=cancelled`;
+
+      try {
+        const session = await createStripeCheckoutSession({
+          secretKey: stripeSecretKey,
+          priceId: stripePriceId,
+          plan: requestedPlan,
+          username: authUser.username,
+          email: profile.email ?? null,
+          successUrl,
+          cancelUrl,
+        });
+
+        logActivity({
+          username: authUser.username,
+          action: 'billing_checkout_created',
+          details: { plan: requestedPlan, sessionId: session.id || null },
+        });
+
+        return await sendJson(res, 200, { url: session.url }, corsHeaders ?? {});
+      } catch (err) {
+        logger.error('Stripe checkout creation failed', {
+          username: authUser.username,
+          plan: requestedPlan,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return await sendJson(res, 502, {
+          error: err instanceof Error ? err.message : 'Erro ao iniciar checkout Stripe',
+        }, corsHeaders ?? {});
+      }
+    }
+
     // -----------------------------------------------------------------------
     // Map routes
     // -----------------------------------------------------------------------
@@ -992,20 +1661,37 @@ const server = http.createServer(async (req, res) => {
 
     // Extract authenticated user (falls back to 'local' if no token)
     const authUser = await getAuthUser(req);
+    if (authUser.username === 'local') {
+      return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+    }
 
-    // Use the authenticated username instead of the URL username when a valid
-    // token is present (the URL username is kept for backward compatibility
-    // with unauthenticated "local" requests).
-    const effectiveUsername = authUser.username !== 'local' ? authUser.username : user;
+    const isAdmin = authUser.isAdmin === true;
+    const effectiveUsername = isAdmin ? user : authUser.username;
 
     if (req.method === 'GET' && id === null) {
+      if (isAdmin) {
+        const maps = await listMapsForAdmin(authUser.username);
+        return await sendJson(res, 200, maps, corsHeaders ?? {});
+      }
       const maps = await listMaps(effectiveUsername);
       return await sendJson(res, 200, maps, corsHeaders ?? {});
     }
 
     if (req.method === 'GET' && id) {
-      const map = await getMap(effectiveUsername, id);
+      let targetUsername = effectiveUsername;
+      if (isAdmin) {
+        const owner = await findMapOwnerForAdmin(id, user);
+        if (owner) targetUsername = owner;
+      }
+      const map = await getMap(targetUsername, id);
       if (!map) return await sendJson(res, 404, { error: 'Map not found' }, corsHeaders ?? {});
+      if (isAdmin) {
+        return await sendJson(res, 200, {
+          ...map,
+          ownerUsername: targetUsername,
+          ownerPath: `${targetUsername}/${map.title}`,
+        }, corsHeaders ?? {});
+      }
       return await sendJson(res, 200, map, corsHeaders ?? {});
     }
 
@@ -1015,24 +1701,39 @@ const server = http.createServer(async (req, res) => {
       const body = parsed.body;
       if (!body || typeof body !== 'object') return await sendJson(res, 400, { error: 'Invalid JSON body' }, corsHeaders ?? {});
 
+      let writeUsername = effectiveUsername;
+      if (isAdmin) {
+        const owner = await findMapOwnerForAdmin(id, user);
+        if (owner) writeUsername = owner;
+      }
+
       // Check if this is a new map (not an update to an existing one)
-      const existingMap = await getMap(effectiveUsername, id);
+      const existingMap = await getMap(writeUsername, id);
       const isNewMap = !existingMap;
 
       if (isNewMap) {
         // Enforce monthly map creation limit
         let planId = 'free';
-        if (effectiveUsername !== 'local') {
+        if (writeUsername !== 'local') {
           try {
-            const profile = await getUser(effectiveUsername);
+            const profile = await getUser(writeUsername);
             planId = profile?.plan ?? 'free';
           } catch {
             planId = 'free';
           }
         }
         const limits = getPlanLimits(planId);
+        if (limits.maxMapsStored !== -1) {
+          const allMaps = await listMaps(writeUsername);
+          if (allMaps.length >= limits.maxMapsStored) {
+            return await sendJson(res, 403, {
+              error: `Limite de ${limits.maxMapsStored} mapas no total atingido`,
+              upgrade: true,
+            }, corsHeaders ?? {});
+          }
+        }
         if (limits.mapsPerMonth !== -1) {
-          const usage = await getUsage(effectiveUsername);
+          const usage = await getUsage(writeUsername);
           if (usage.mapsCreatedThisMonth >= limits.mapsPerMonth) {
             return await sendJson(res, 403, {
               error: 'Limite do plano gratuito atingido',
@@ -1042,13 +1743,13 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const saved = await putMap(effectiveUsername, id, body);
+      const saved = await putMap(writeUsername, id, body);
 
       // Increment usage counter for new maps
       if (isNewMap) {
         try {
-          await incrementMapCount(effectiveUsername);
-          logActivity({ username: effectiveUsername, action: 'create_map', details: { mapId: id } });
+          await incrementMapCount(writeUsername);
+          logActivity({ username: writeUsername, action: 'create_map', details: { mapId: id } });
           // Check for suspicious activity after map creation
           setTimeout(() => { try { checkAndNotify(); } catch {} }, 0);
         } catch {
@@ -1060,7 +1761,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'DELETE' && id) {
-      const deleted = await deleteMap(effectiveUsername, id);
+      let deleteUsername = effectiveUsername;
+      if (isAdmin) {
+        const owner = await findMapOwnerForAdmin(id, user);
+        if (owner) deleteUsername = owner;
+      }
+      const deleted = await deleteMap(deleteUsername, id);
       return await sendJson(res, 200, { ok: true, deleted }, corsHeaders ?? {});
     }
 

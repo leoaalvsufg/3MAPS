@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/auth-store';
-import { forgotPassword, resetPassword } from '@/services/api/authApi';
+import { forgotPassword, resetPassword, requestMagicLink } from '@/services/api/authApi';
 import { APP_VERSION } from '@/lib/version';
 import { isFirebaseConfigured, getFirebaseAuth, GoogleAuthProvider } from '@/lib/firebase';
 import {
@@ -311,7 +311,165 @@ function FirebaseRegisterForm() {
 // Login form (legacy — nome de usuário)
 // ---------------------------------------------------------------------------
 
-function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
+// ---------------------------------------------------------------------------
+// Magic link verify (ao clicar no link no e-mail)
+// ---------------------------------------------------------------------------
+
+function MagicLinkVerify({ token, onSuccess }: { token: string; onSuccess: () => void }) {
+  const navigate = useNavigate();
+  const loginWithMagicLink = useAuthStore((s) => s.loginWithMagicLink);
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        await loginWithMagicLink(token);
+        if (!mounted) return;
+        setStatus('success');
+        navigate('/');
+      } catch (err) {
+        if (!mounted) return;
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; };
+  }, [token, loginWithMagicLink, navigate]);
+
+  if (status === 'loading') {
+    return (
+      <div className="flex flex-col gap-4 text-center py-8">
+        <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center mx-auto animate-pulse">
+          <svg className="w-7 h-7 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <p className="text-sm text-slate-500">Validando seu link…</p>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </div>
+        <p className="text-sm text-red-600">Link inválido ou expirado. Solicite um novo link.</p>
+        <Button variant="outline" onClick={onSuccess} className="w-full">
+          Voltar ao login
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Magic link form (enviar link por e-mail)
+// ---------------------------------------------------------------------------
+
+function MagicLinkForm({ onBack }: { onBack: () => void }) {
+  const [login, setLogin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (!login.trim()) {
+      setError('Informe o e-mail ou nome de usuário.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await requestMagicLink(login.trim());
+      setSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao enviar link. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (success) {
+    return (
+      <div className="flex flex-col gap-4 text-center">
+        <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-slate-900 mb-1">Link enviado!</h3>
+          <p className="text-sm text-slate-500">
+            Se o e-mail ou usuário estiver cadastrado, você receberá um link para entrar em breve.
+            Verifique também a pasta de spam.
+          </p>
+        </div>
+        <Button variant="outline" onClick={onBack} className="w-full">
+          Voltar ao login
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div>
+        <h3 className="text-base font-semibold text-slate-900 mb-1">Entrar com link mágico</h3>
+        <p className="text-sm text-slate-500">
+          Informe o e-mail ou nome de usuário da sua conta. Enviaremos um link de acesso único por e-mail.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="magic-login" className="text-sm font-medium text-slate-700">
+          E-mail ou nome de usuário
+        </label>
+        <Input
+          id="magic-login"
+          type="text"
+          autoComplete="username email"
+          placeholder="seu@email.com ou nome_de_usuario"
+          value={login}
+          onChange={(e) => setLogin(e.target.value)}
+          disabled={loading}
+        />
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      <Button type="submit" disabled={loading} className="w-full">
+        {loading ? 'Enviando…' : 'Enviar link mágico'}
+      </Button>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors text-center"
+      >
+        ← Voltar ao login
+      </button>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login form (legacy — nome de usuário)
+// ---------------------------------------------------------------------------
+
+function LoginForm({ onForgotPassword, onMagicLink }: { onForgotPassword: () => void; onMagicLink: () => void }) {
   const navigate = useNavigate();
   const login = useAuthStore((s) => s.login);
 
@@ -325,7 +483,7 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
     setError(null);
 
     if (!username.trim()) {
-      setError('Informe o nome de usuário.');
+      setError('Informe o e-mail ou nome de usuário.');
       return;
     }
     if (!password) {
@@ -348,13 +506,13 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="login-username" className="text-sm font-medium text-slate-700">
-          Nome de usuário
+          E-mail ou nome de usuário
         </label>
         <Input
           id="login-username"
           type="text"
-          autoComplete="username"
-          placeholder="seu_usuario"
+          autoComplete="username email"
+          placeholder="seu@email.com ou nome_de_usuario"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           disabled={loading}
@@ -366,13 +524,23 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
           <label htmlFor="login-password" className="text-sm font-medium text-slate-700">
             Senha
           </label>
-          <button
-            type="button"
-            onClick={onForgotPassword}
-            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
-          >
-            Esqueci minha senha
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onMagicLink}
+              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+            >
+              Entrar com link mágico
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+            >
+              Esqueci minha senha
+            </button>
+          </div>
         </div>
         <Input
           id="login-password"
@@ -402,13 +570,16 @@ function LoginForm({ onForgotPassword }: { onForgotPassword: () => void }) {
 // Login tab: Firebase (email/Google) or legacy username
 // ---------------------------------------------------------------------------
 
-function LoginTabContent({ onForgotPassword }: { onForgotPassword: () => void }) {
+function LoginTabContent({ onForgotPassword, onMagicLink }: { onForgotPassword: () => void; onMagicLink: () => void }) {
   const [showLegacy, setShowLegacy] = useState(false);
   const useFirebase = isFirebaseConfigured();
 
   if (useFirebase && !showLegacy) {
     return (
       <div className="flex flex-col gap-4">
+        <p className="text-xs text-slate-500 -mt-1">
+          Use e-mail e senha, login social (Google) ou conta local (e-mail/nome de usuário).
+        </p>
         <FirebaseLoginForm onForgotPassword={onForgotPassword} />
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
@@ -423,7 +594,7 @@ function LoginTabContent({ onForgotPassword }: { onForgotPassword: () => void })
           onClick={() => setShowLegacy(true)}
           className="text-sm text-slate-500 hover:text-slate-700 hover:underline transition-colors"
         >
-          Entrar com nome de usuário
+          Entrar com e-mail ou nome de usuário (conta local)
         </button>
       </div>
     );
@@ -431,7 +602,29 @@ function LoginTabContent({ onForgotPassword }: { onForgotPassword: () => void })
 
   return (
     <div className="flex flex-col gap-4">
-      <LoginForm onForgotPassword={onForgotPassword} />
+      <LoginForm onForgotPassword={onForgotPassword} onMagicLink={onMagicLink} />
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-slate-200" />
+        </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="bg-white px-2 text-slate-500">ou</span>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        disabled={!useFirebase}
+        onClick={() => setShowLegacy(false)}
+      >
+        Entrar com Google
+      </Button>
+      {!useFirebase && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Login social disponível após configurar Firebase (VITE_FIREBASE_API_KEY e VITE_FIREBASE_APP_ID).
+        </p>
+      )}
       {useFirebase && (
         <button
           type="button"
@@ -827,20 +1020,23 @@ function ResetPasswordForm({ token, onSuccess }: { token: string; onSuccess: () 
 // Auth page
 // ---------------------------------------------------------------------------
 
-type AuthView = 'tabs' | 'forgot' | 'reset';
+type AuthView = 'tabs' | 'forgot' | 'reset' | 'magic' | 'magic-verify';
 
 export function AuthPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<AuthView>('tabs');
   const [resetToken, setResetToken] = useState<string | null>(null);
 
-  // Check URL params for reset token
+  // Check URL params for reset token or magic link
   useEffect(() => {
     const action = searchParams.get('action');
     const token = searchParams.get('token');
     if (action === 'reset' && token) {
       setResetToken(token);
       setView('reset');
+    } else if (action === 'magic' && token) {
+      setResetToken(token);
+      setView('magic-verify');
     }
   }, [searchParams]);
 
@@ -880,6 +1076,14 @@ export function AuthPage() {
             <ResetPasswordForm token={resetToken} onSuccess={handleResetSuccess} />
           )}
 
+          {view === 'magic' && (
+            <MagicLinkForm onBack={handleBackToLogin} />
+          )}
+
+          {view === 'magic-verify' && resetToken && (
+            <MagicLinkVerify token={resetToken} onSuccess={handleBackToLogin} />
+          )}
+
           {view === 'tabs' && (
             <Tabs defaultValue="login">
               <TabsList className="w-full mb-6">
@@ -888,7 +1092,7 @@ export function AuthPage() {
               </TabsList>
 
               <TabsContent value="login">
-                <LoginTabContent onForgotPassword={() => setView('forgot')} />
+                <LoginTabContent onForgotPassword={() => setView('forgot')} onMagicLink={() => setView('magic')} />
               </TabsContent>
 
               <TabsContent value="register">
@@ -898,9 +1102,9 @@ export function AuthPage() {
           )}
         </div>
 
-        <div className="text-center text-xs text-slate-400 mt-6">
+        <div className="text-center text-xs text-slate-500 mt-6 space-y-0.5">
           <p>3Maps © {new Date().getFullYear()}</p>
-          <p className="mt-1">v{APP_VERSION}</p>
+          <p>v{APP_VERSION}</p>
         </div>
       </div>
     </div>

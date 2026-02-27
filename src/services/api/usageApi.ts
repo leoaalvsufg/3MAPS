@@ -69,3 +69,18 @@ export async function checkAction(
     body: JSON.stringify({ action, ...opts }),
   });
 }
+
+/**
+ * Record that a chat message was sent for a given map.
+ * Call after the chat response completes successfully.
+ */
+export async function recordChatMessage(token: string, mapId: string): Promise<{ ok: boolean }> {
+  return usageFetch<{ ok: boolean }>('/api/usage/chat-message', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ mapId }),
+  });
+}

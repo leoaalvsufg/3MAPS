@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Crown, Check, X, Lock } from 'lucide-react';
+import { Crown, Check, X, Lock, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -8,6 +8,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { useAuthStore } from '@/stores/auth-store';
+import { createCheckoutSession } from '@/services/api/billingApi';
 
 // ---------------------------------------------------------------------------
 // UpgradePrompt — shown when a user hits a plan limit
@@ -26,7 +28,7 @@ const FREE_FEATURES = [
   '3 templates disponíveis',
   'Exportação apenas em PNG',
   'Chat limitado (5 msgs/mapa)',
-  'Até 20 mapas armazenados',
+  'Até 5 mapas armazenados',
 ];
 
 const PREMIUM_FEATURES = [
@@ -39,10 +41,25 @@ const PREMIUM_FEATURES = [
 ];
 
 export function UpgradePrompt({ feature, message, onClose }: UpgradePromptProps) {
-  const [showContactMessage, setShowContactMessage] = useState(false);
+  const token = useAuthStore((s) => s.token);
+  const [submitting, setSubmitting] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
-  const handleUpgrade = () => {
-    setShowContactMessage(true);
+  const handleUpgrade = async () => {
+    if (!token) {
+      setCheckoutError('Faça login para iniciar o pagamento.');
+      return;
+    }
+
+    setCheckoutError(null);
+    setSubmitting(true);
+    try {
+      const { url } = await createCheckoutSession(token, 'premium');
+      window.location.href = url;
+    } catch (err) {
+      setCheckoutError(err instanceof Error ? err.message : 'Não foi possível iniciar o checkout.');
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -103,25 +120,22 @@ export function UpgradePrompt({ feature, message, onClose }: UpgradePromptProps)
 
         {/* Upgrade action */}
         <div className="mt-4 space-y-2">
-          {showContactMessage ? (
-            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 text-center">
-              Em breve! Contate{' '}
-              <a
-                href="mailto:suporte@3maps.com"
-                className="font-semibold underline underline-offset-2"
-              >
-                suporte@3maps.com
-              </a>{' '}
-              para mais informações.
-            </div>
-          ) : (
-            <Button
-              className="w-full bg-amber-500 hover:bg-amber-600 text-white gap-2"
-              onClick={handleUpgrade}
-            >
+          <Button
+            className="w-full bg-amber-500 hover:bg-amber-600 text-white gap-2"
+            onClick={handleUpgrade}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
               <Crown className="h-4 w-4" />
-              Fazer Upgrade
-            </Button>
+            )}
+            {submitting ? 'Redirecionando para Stripe...' : 'Fazer Upgrade'}
+          </Button>
+          {checkoutError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 text-center">
+              {checkoutError}
+            </div>
           )}
           <Button variant="outline" className="w-full" onClick={onClose}>
             Continuar no Plano Gratuito

@@ -15,8 +15,8 @@ const ExportDialog = lazy(() =>
 );
 import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { callLLM, parseJSON } from '@/services/llm/client';
-import { getRouteOptions } from '@/services/llm/routeLLM';
+import { parseJSON } from '@/services/llm/client';
+import { callRoutedLLM } from '@/services/llm/routedClient';
 		import { getNodeByNodeDetailedRefinementPrompt, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
@@ -120,7 +120,7 @@ export function MapPage() {
   }, [id]); // Only depends on map ID
 
 	const handlePostGenAction = async (action: 'conciso' | 'detalhado' | 'traduzir' | 'regenerar') => {
-    if (!map || !map.analysis || !settings.hasApiKey()) return;
+    if (!map || !map.analysis || !settings.hasAnyApiKey()) return;
 		// Hard guard to avoid duplicate clicks / double-requests while processing.
 		if (postGenInFlightRef.current) return;
 		postGenInFlightRef.current = true;
@@ -143,12 +143,10 @@ export function MapPage() {
 					nodes: nodesForRefinement,
 				});
 
-				const refineOpts = await getRouteOptions('refine_detailed');
-				if (!refineOpts) return;
-				const result = await callLLM(
+				const result = await callRoutedLLM(
+					'refine_detailed',
 					[{ role: 'user', content: prompt }],
 					{
-						...refineOpts,
 						maxTokens: 4200,
 						temperature: 0.35,
 					}
@@ -173,11 +171,10 @@ export function MapPage() {
 			}
 
 	    const prompt = getPostGenPrompt(action, map.analysis);
-	    const postgenOpts = await getRouteOptions('postgen');
-	    if (!postgenOpts) return;
-	    const result = await callLLM(
+	    const result = await callRoutedLLM(
+	      'postgen',
 	      [{ role: 'user', content: prompt }],
-	      { ...postgenOpts, maxTokens: 6000 }
+	      { maxTokens: 6000 }
 	    );
 	    const newData = normalizeMindElixirData(parseJSON<MindElixirData>(result));
 	    updateMap(map.id, { mindElixirData: newData });

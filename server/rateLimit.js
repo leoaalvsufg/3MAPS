@@ -1,4 +1,4 @@
-/**
+Carregando 3Maps…'/**
  * Simple in-memory sliding-window rate limiter.
  *
  * Limits each IP to MAX_REQUESTS requests within WINDOW_MS milliseconds.
@@ -10,7 +10,7 @@
  *   if (!checkRateLimit(req, res)) return; // response already sent
  */
 
-const MAX_REQUESTS = 100;       // requests allowed per window
+const MAX_REQUESTS = 300;       // API requests allowed per window (per IP)
 const WINDOW_MS = 60 * 1000;   // 1 minute in milliseconds
 
 /**
