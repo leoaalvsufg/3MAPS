@@ -1,4 +1,4 @@
-Carregando 3Maps…'/**
+/**
  * Simple in-memory sliding-window rate limiter.
  *
  * Limits each IP to MAX_REQUESTS requests within WINDOW_MS milliseconds.

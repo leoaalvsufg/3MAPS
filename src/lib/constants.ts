@@ -131,6 +131,9 @@ export const SUGGESTIONS = [
 
 export const REPLICATE_IMAGE_MODEL = 'black-forest-labs/flux-schnell';
 
+/** Modelo multimodal (YouTube, imagem) — sempre Gemini 2.5 Flash */
+export const GEMINI_MULTIMODAL_MODEL = 'gemini-2.5-flash';
+
 export const DEFAULT_SETTINGS = {
   username: 'local',
   provider: 'openrouter' as const,

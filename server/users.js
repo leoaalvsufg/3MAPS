@@ -54,6 +54,8 @@ export function validatePassword(password) {
  *   passwordHash: string,
  *   plan: 'free' | 'premium' | 'admin' | 'enterprise',
  *   email: string | null,
+ *   photoUrl: string | null,
+ *   extraCredits: number,
  *   createdAt: string,
  *   updatedAt: string,
  *   isActive: boolean,
@@ -74,6 +76,8 @@ function rowToProfile(row) {
     passwordHash: row.password_hash,
     plan: row.plan,
     email: row.email ?? null,
+    photoUrl: row.photo_url ?? null,
+    extraCredits: Number(row.extra_credits ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     isActive: row.is_active === 1,
@@ -108,6 +112,11 @@ export async function createUser(username, password, options = {}) {
     INSERT INTO users (id, username, password_hash, plan, email, is_admin)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(userId, username, passwordHash, plan, email, isAdmin);
+
+  addExtraCredits(username, 2, {
+    reason: 'Crédito inicial de boas-vindas',
+    createdBy: null,
+  });
 
   return { userId, username };
 }
@@ -155,35 +164,45 @@ export async function getUserByFirebaseUid(firebaseUid) {
 
 /**
  * Create or get user from Firebase Auth (email/Google). Links by firebase_uid or creates new.
- * @param {{ uid: string, email?: string | null, displayName?: string | null }} firebaseUser
+ * @param {{ uid: string, email?: string | null, displayName?: string | null, picture?: string | null }} firebaseUser
  * @returns {Promise<{ userId: string, username: string }>}
  */
 export async function getOrCreateUserFromFirebase(firebaseUser) {
-  const { uid, email, displayName } = firebaseUser;
+  const { uid, email, displayName, picture } = firebaseUser;
   if (!uid) throw new Error('Firebase UID is required');
+
+  const db = getDb();
+  const photoUrl = (picture && typeof picture === 'string') ? picture.trim() : null;
 
   const existing = await getUserByFirebaseUid(uid);
   if (existing) {
+    if (photoUrl) {
+      db.prepare('UPDATE users SET photo_url = ?, updated_at = datetime(\'now\') WHERE id = ?').run(photoUrl, existing.userId);
+    }
     return { userId: existing.userId, username: existing.username };
   }
 
   const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : null;
   if (normalizedEmail) {
-    const db = getDb();
     const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
     if (byEmail) {
-      db.prepare('UPDATE users SET firebase_uid = ?, updated_at = datetime(\'now\') WHERE id = ?').run(uid, byEmail.id);
+      db.prepare('UPDATE users SET firebase_uid = ?, photo_url = COALESCE(?, photo_url), updated_at = datetime(\'now\') WHERE id = ?').run(uid, photoUrl, byEmail.id);
       return { userId: byEmail.id, username: byEmail.username };
     }
   }
 
   const username = await uniqueUsernameFromEmail(normalizedEmail || displayName || uid);
   const userId = crypto.randomUUID();
-  const db = getDb();
   db.prepare(`
-    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid)
-    VALUES (?, ?, ?, ?, ?, 0, ?)
-  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid);
+    INSERT INTO users (id, username, password_hash, plan, email, is_admin, firebase_uid, photo_url)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+  `).run(userId, username, FIREBASE_PASSWORD_PLACEHOLDER, 'free', normalizedEmail, uid, photoUrl);
+
+  addExtraCredits(username, 2, {
+    reason: 'Crédito inicial de boas-vindas',
+    createdBy: null,
+  });
+
   return { userId, username };
 }
 
@@ -235,7 +254,7 @@ export async function getUserById(userId) {
 /**
  * Update user fields (plan, email, isActive, isAdmin, password).
  * @param {string} username
- * @param {{ plan?: string, email?: string, isActive?: boolean, isAdmin?: boolean, password?: string, stripeCustomerId?: string | null }} updates
+ * @param {{ plan?: string, email?: string, photoUrl?: string | null, extraCredits?: number, isActive?: boolean, isAdmin?: boolean, password?: string, stripeCustomerId?: string | null }} updates
  * @returns {Promise<UserProfile | null>}
  */
 export async function updateUser(username, updates) {
@@ -272,6 +291,15 @@ export async function updateUser(username, updates) {
     fields.push('stripe_customer_id = ?');
     values.push(updates.stripeCustomerId === null || updates.stripeCustomerId === '' ? null : updates.stripeCustomerId);
   }
+  if (updates.photoUrl !== undefined) {
+    fields.push('photo_url = ?');
+    values.push(updates.photoUrl === null || updates.photoUrl === '' ? null : updates.photoUrl);
+  }
+  if (updates.extraCredits !== undefined) {
+    const n = Number(updates.extraCredits);
+    fields.push('extra_credits = ?');
+    values.push(Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0);
+  }
 
   if (fields.length === 0) return existing;
 
@@ -281,6 +309,161 @@ export async function updateUser(username, updates) {
   db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE username = ?`).run(...values);
 
   return getUser(username);
+}
+
+/**
+ * Consume extra credits atomically.
+ * @param {string} username
+ * @param {number} amount
+ * @returns {{ ok: boolean, remaining: number }}
+ */
+export function consumeExtraCredits(username, amount) {
+  const db = getDb();
+  const qty = Math.max(0, Math.floor(Number(amount) || 0));
+  if (qty <= 0) {
+    const row = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    return { ok: true, remaining: Number(row?.extra_credits ?? 0) };
+  }
+
+  const tx = db.transaction((options = {}) => {
+    const reason = typeof options.reason === 'string' ? options.reason : 'consume_extra_credits';
+    const createdBy = typeof options.createdBy === 'string' ? options.createdBy : null;
+    const requestId = typeof options.requestId === 'string' ? options.requestId.trim() : '';
+
+    if (requestId) {
+      const existing = db.prepare(`
+        SELECT id, balance_after
+        FROM credit_ledger
+        WHERE request_id = ?
+      `).get(requestId);
+      if (existing) {
+        return { ok: true, remaining: Number(existing.balance_after ?? 0), idempotent: true, ledgerEntryId: existing.id };
+      }
+    }
+
+    const before = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    const current = Number(before?.extra_credits ?? 0);
+    if (current < qty) return { ok: false, remaining: current };
+    db.prepare(`
+      UPDATE users
+      SET extra_credits = extra_credits - ?,
+          updated_at = datetime('now')
+      WHERE username = ? AND extra_credits >= ?
+    `).run(qty, username, qty);
+    const after = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    const remaining = Number(after?.extra_credits ?? 0);
+    const insert = db.prepare(`
+      INSERT INTO credit_ledger (username, delta, balance_before, balance_after, reason, created_by, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(username, -qty, current, remaining, reason, createdBy, requestId || null);
+    return { ok: true, remaining, ledgerEntryId: insert.lastInsertRowid };
+  });
+
+  return tx();
+}
+
+/**
+ * Add extra credits atomically with audit ledger.
+ * @param {string} username
+ * @param {number} amount
+ * @param {{ reason?: string, createdBy?: string | null, requestId?: string | null }} [options]
+ * @returns {{ ok: boolean, added: number, before: number, after: number, ledgerEntryId: number | null, idempotent?: boolean }}
+ */
+export function addExtraCredits(username, amount, options = {}) {
+  const db = getDb();
+  const qty = Math.max(0, Math.floor(Number(amount) || 0));
+  if (qty <= 0) {
+    const row = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    const current = Number(row?.extra_credits ?? 0);
+    return { ok: true, added: 0, before: current, after: current, ledgerEntryId: null };
+  }
+
+  const tx = db.transaction(() => {
+    const reason = typeof options.reason === 'string' ? options.reason : 'admin_credit_add';
+    const createdBy = typeof options.createdBy === 'string' ? options.createdBy : null;
+    const requestId = typeof options.requestId === 'string' ? options.requestId.trim() : '';
+
+    if (requestId) {
+      const existing = db.prepare(`
+        SELECT id, delta, balance_before, balance_after
+        FROM credit_ledger
+        WHERE request_id = ?
+      `).get(requestId);
+      if (existing) {
+        return {
+          ok: true,
+          added: Number(existing.delta ?? 0),
+          before: Number(existing.balance_before ?? 0),
+          after: Number(existing.balance_after ?? 0),
+          ledgerEntryId: Number(existing.id),
+          idempotent: true,
+        };
+      }
+    }
+
+    const row = db.prepare('SELECT extra_credits FROM users WHERE username = ?').get(username);
+    const before = Number(row?.extra_credits ?? 0);
+    const after = before + qty;
+
+    db.prepare(`
+      UPDATE users
+      SET extra_credits = ?,
+          updated_at = datetime('now')
+      WHERE username = ?
+    `).run(after, username);
+
+    const insert = db.prepare(`
+      INSERT INTO credit_ledger (username, delta, balance_before, balance_after, reason, created_by, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(username, qty, before, after, reason, createdBy, requestId || null);
+
+    return {
+      ok: true,
+      added: qty,
+      before,
+      after,
+      ledgerEntryId: Number(insert.lastInsertRowid),
+    };
+  });
+
+  return tx();
+}
+
+/**
+ * List credit ledger entries for a user.
+ * @param {string} username
+ * @param {{ limit?: number, offset?: number }} [options]
+ * @returns {{ entries: Array<{ id: number, username: string, delta: number, balanceBefore: number, balanceAfter: number, reason: string | null, createdBy: string | null, requestId: string | null, createdAt: string }>, total: number }}
+ */
+export function listCreditLedger(username, options = {}) {
+  const db = getDb();
+  const limit = Math.max(1, Math.min(200, Number(options.limit ?? 50)));
+  const offset = Math.max(0, Number(options.offset ?? 0));
+  const total = Number(
+    db.prepare('SELECT COUNT(*) as c FROM credit_ledger WHERE username = ?').get(username)?.c ?? 0
+  );
+  const rows = db.prepare(`
+    SELECT id, username, delta, balance_before, balance_after, reason, created_by, request_id, created_at
+    FROM credit_ledger
+    WHERE username = ?
+    ORDER BY id DESC
+    LIMIT ? OFFSET ?
+  `).all(username, limit, offset);
+
+  return {
+    entries: rows.map((r) => ({
+      id: Number(r.id),
+      username: r.username,
+      delta: Number(r.delta),
+      balanceBefore: Number(r.balance_before),
+      balanceAfter: Number(r.balance_after),
+      reason: r.reason ?? null,
+      createdBy: r.created_by ?? null,
+      requestId: r.request_id ?? null,
+      createdAt: r.created_at,
+    })),
+    total,
+  };
 }
 
 /**

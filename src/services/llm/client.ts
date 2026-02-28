@@ -20,6 +20,50 @@ const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const OPENAI_BASE = 'https://api.openai.com/v1';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+export type MultimodalPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
+  | { fileData: { fileUri: string; mimeType: string } };
+
+export interface CallGeminiMultimodalOptions {
+  apiKey: string;
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/** Chama Gemini com parts multimodais (texto, imagem base64, fileUri para YouTube). */
+export async function callGeminiMultimodal(
+  parts: MultimodalPart[],
+  options: CallGeminiMultimodalOptions
+): Promise<string> {
+  const { apiKey, model, temperature = 0.3, maxTokens = 4096 } = options;
+  const body = {
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+    },
+  };
+
+  const url = `${GEMINI_BASE}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${error}`);
+  }
+
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (text == null) throw new Error('Resposta vazia da API Gemini');
+  return text;
+}
+
 function buildGeminiRequest(messages: LLMMessage[], temperature: number, maxTokens: number) {
   const systemParts: string[] = [];
   const contents: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];

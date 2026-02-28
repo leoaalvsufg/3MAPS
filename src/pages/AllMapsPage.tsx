@@ -4,7 +4,6 @@ import { Map, Search, Plus, RefreshCw, LayoutGrid, List, Calendar, Tag } from 'l
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MapCard } from '@/components/maps/MapCard';
-import { TagBadge } from '@/components/maps/TagBadge';
 import { useMapsStore } from '@/stores/maps-store';
 import { useUIStore } from '@/stores/ui-store';
 import { useAuthStore } from '@/stores/auth-store';
@@ -38,16 +37,6 @@ function MapListRow({ map }: { map: SavedMap }) {
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-sm text-foreground truncate">{displayTitle}</h3>
         <p className="text-xs text-muted-foreground truncate mt-0.5">{map.query}</p>
-      </div>
-
-      {/* Tags */}
-      <div className="hidden sm:flex items-center gap-1 shrink-0">
-        {map.tags.slice(0, 2).map((tag) => (
-          <TagBadge key={tag} name={tag} />
-        ))}
-        {map.tags.length > 2 && (
-          <span className="text-xs text-muted-foreground">+{map.tags.length - 2}</span>
-        )}
       </div>
 
       {/* Template */}
@@ -86,10 +75,8 @@ function MapListRow({ map }: { map: SavedMap }) {
 export function AllMapsPage() {
   const navigate = useNavigate();
   const maps = useMapsStore((s) => s.maps);
-  const getAllTags = useMapsStore((s) => s.getAllTags);
   const loadAllMapsFromServer = useMapsStore((s) => s.loadAllMapsFromServer);
   const [search, setSearch] = useState('');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const sortBy = useUIStore((s) => s.sortBy);
   const setSortBy = useUIStore((s) => s.setSortBy);
@@ -106,8 +93,6 @@ export function AllMapsPage() {
     }
   }, [isAuthenticated, loadAllMapsFromServer]);
 
-  const allTags = getAllTags();
-
   const filtered = useMemo(() => {
     let result = [...maps];
 
@@ -116,13 +101,8 @@ export function AllMapsPage() {
       result = result.filter(
         (m) =>
           m.title.toLowerCase().includes(q) ||
-          m.query.toLowerCase().includes(q) ||
-          m.tags.some((t) => t.includes(q))
+          m.query.toLowerCase().includes(q)
       );
-    }
-
-    if (activeTag) {
-      result = result.filter((m) => m.tags.includes(activeTag));
     }
 
     if (sortBy === 'title') {
@@ -134,7 +114,7 @@ export function AllMapsPage() {
     }
 
     return result;
-  }, [maps, search, activeTag, sortBy]);
+  }, [maps, search, sortBy]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -221,29 +201,6 @@ export function AllMapsPage() {
           </select>
         </div>
 
-        {/* Tag filters */}
-        {allTags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            <button
-              onClick={() => setActiveTag(null)}
-              className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                !activeTag
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'border-border text-muted-foreground hover:border-foreground/30'
-              }`}
-            >
-              Todas
-            </button>
-            {allTags.map((tag) => (
-              <TagBadge
-                key={tag}
-                name={tag}
-                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                active={activeTag === tag}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Content */}

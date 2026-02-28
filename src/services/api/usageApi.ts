@@ -14,6 +14,7 @@ export interface UsageData {
 export interface UsageResponse {
   usage: UsageData;
   limits: PlanLimits;
+  extraCredits?: number;
 }
 
 export interface CheckActionResponse {
@@ -58,7 +59,7 @@ export async function getUsage(token: string): Promise<UsageResponse> {
 export async function checkAction(
   token: string,
   action: string,
-  opts?: { mapId?: string; format?: string }
+  opts?: { mapId?: string; format?: string; generationMode?: 'normal' | 'deep' }
 ): Promise<CheckActionResponse> {
   return usageFetch<CheckActionResponse>('/api/usage/check', {
     method: 'POST',
@@ -67,6 +68,50 @@ export async function checkAction(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ action, ...opts }),
+  });
+}
+
+export async function consumeMapGenerationCredits(
+  token: string,
+  generationMode: 'normal' | 'deep',
+  requestId?: string
+): Promise<{ ok: boolean; consumedExtraCredits: number; remainingExtraCredits: number; ledgerEntryId?: number; idempotent?: boolean }> {
+  return usageFetch<{ ok: boolean; consumedExtraCredits: number; remainingExtraCredits: number; ledgerEntryId?: number; idempotent?: boolean }>('/api/usage/map-generation', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ generationMode, requestId }),
+  });
+}
+
+export async function listMyCreditLedger(
+  token: string,
+  params?: { limit?: number; offset?: number }
+): Promise<{
+  username: string;
+  currentBalance: number;
+  entries: Array<{
+    id: number;
+    username: string;
+    delta: number;
+    balanceBefore: number;
+    balanceAfter: number;
+    reason: string | null;
+    createdBy: string | null;
+    requestId: string | null;
+    createdAt: string;
+  }>;
+  total: number;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return usageFetch(`/api/usage/credits/ledger${query}`, {
+    method: 'GET',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
   });
 }
 

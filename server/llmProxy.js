@@ -43,6 +43,8 @@ const DEFAULT_MODELS = {
   gemini: 'gemini-2.0-flash',
 };
 
+const GEMINI_MULTIMODAL_MODEL = 'gemini-2.5-flash';
+
 function getKey(provider) {
   const keys = {
     openrouter: 'openrouter_api_key',
@@ -53,18 +55,66 @@ function getKey(provider) {
   return key && typeof key === 'string' && key.trim().length > 0 ? key.trim() : null;
 }
 
+function isProviderEnabled(provider) {
+  const key = `provider_enabled_${provider}`;
+  const raw = getAdminSetting(key, true);
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'string') {
+    const v = raw.trim().toLowerCase();
+    if (v === 'false' || v === '0' || v === 'off' || v === 'no') return false;
+    if (v === 'true' || v === '1' || v === 'on' || v === 'yes') return true;
+  }
+  return true;
+}
+
+const DEFAULT_MODEL_IDS = {
+  openrouter: ['google/gemini-2.0-flash-001', 'google/gemini-2.0-flash-lite-001', 'anthropic/claude-3-haiku'],
+  openai: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'],
+  gemini: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+};
+
+function getProviderEnabledModels(provider) {
+  const key = `${provider}_enabled_models`;
+  const raw = getAdminSetting(key);
+  if (Array.isArray(raw) && raw.length > 0) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch { /* ignore */ }
+  }
+  return DEFAULT_MODEL_IDS[provider] ?? [DEFAULT_MODELS[provider]];
+}
+
 /**
  * Retorna lista de { provider, model } com chaves configuradas (para fallback).
+ * Inclui todos os modelos habilitados por provedor.
  */
 export function getAvailableLlmOptions() {
   const options = [];
   const order = ['openrouter', 'openai', 'gemini'];
   for (const provider of order) {
-    if (getKey(provider)) {
-      options.push({ provider, model: DEFAULT_MODELS[provider] });
+    if (isProviderEnabled(provider) && getKey(provider)) {
+      const models = getProviderEnabledModels(provider);
+      for (const model of models) {
+        if (model && typeof model === 'string') options.push({ provider, model });
+      }
     }
   }
   return options;
+}
+
+/**
+ * Retorna { options, providerModels } para o frontend.
+ */
+export function getLlmOptionsWithModels() {
+  const options = getAvailableLlmOptions();
+  const providerModels = {
+    openrouter: getProviderEnabledModels('openrouter'),
+    openai: getProviderEnabledModels('openai'),
+    gemini: getProviderEnabledModels('gemini'),
+  };
+  return { options, providerModels };
 }
 
 /**
@@ -138,6 +188,42 @@ export async function proxyLlmComplete({ provider, model, messages, temperature 
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('Resposta vazia da API LLM');
   return content;
+}
+
+/**
+ * Proxy LLM multimodal (Gemini only). Aceita parts: text, inlineData, fileData.
+ */
+export async function proxyLlmMultimodal({ model, parts, temperature = 0.3, maxTokens = 4096 }) {
+  const apiKey = getKey('gemini');
+  if (!apiKey) {
+    throw new Error('Chave da API Gemini não configurada. Configure no painel administrativo.');
+  }
+
+  const effectiveModel = model || GEMINI_MULTIMODAL_MODEL;
+  const url = `${GEMINI_BASE}/models/${effectiveModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const body = {
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+    },
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API error ${res.status}: ${err}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (text == null) throw new Error('Resposta vazia da API Gemini');
+  return text;
 }
 
 /**

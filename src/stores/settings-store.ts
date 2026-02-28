@@ -16,6 +16,7 @@ interface SettingsStore extends SettingsState {
   setTheme: (theme: ThemeMode) => void;
   setGenerateImages: (value: boolean) => void;
   setProviderModels: (provider: LLMProvider, models: string[]) => void;
+  setProviderModelsFromServer?: (providerModels: Partial<Record<LLMProvider, string[]>>) => void;
   addProviderModel: (provider: LLMProvider, model: string) => void;
   removeProviderModel: (provider: LLMProvider, model: string) => void;
   getActiveApiKey: () => Promise<string>;
@@ -90,6 +91,14 @@ export const useSettingsStore = create<SettingsStore>()(
           providerModels: {
             ...state.providerModels,
             [provider]: Array.from(new Set(models.map((m) => m.trim()).filter(Boolean))),
+          },
+        })),
+
+      setProviderModelsFromServer: (providerModels) =>
+        set((state) => ({
+          providerModels: {
+            ...state.providerModels,
+            ...providerModels,
           },
         })),
 

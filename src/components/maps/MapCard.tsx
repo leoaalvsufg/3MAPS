@@ -9,7 +9,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { TagBadge } from './TagBadge';
 import { useMapsStore } from '@/stores/maps-store';
 import { formatDate } from '@/lib/utils';
 import { TEMPLATES } from '@/lib/constants';
@@ -63,18 +62,6 @@ export function MapCard({ map }: MapCardProps) {
           </h3>
 
           <p className="text-xs text-muted-foreground line-clamp-1">{map.query}</p>
-
-          {/* Tags */}
-          {map.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-auto">
-              {map.tags.slice(0, 3).map((tag) => (
-                <TagBadge key={tag} name={tag} />
-              ))}
-              {map.tags.length > 3 && (
-                <span className="text-xs text-muted-foreground">+{map.tags.length - 3}</span>
-              )}
-            </div>
-          )}
 
           {/* Footer */}
           <div className="flex items-center justify-between mt-1">

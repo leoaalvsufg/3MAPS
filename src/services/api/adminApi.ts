@@ -9,11 +9,13 @@ export interface AdminUser {
   userId: string;
   username: string;
   plan: 'free' | 'premium' | 'enterprise' | 'admin';
+  extraCredits?: number;
   email: string | null;
   createdAt: string;
   updatedAt: string;
   isActive: boolean;
   isAdmin: boolean;
+  stripeCustomerId?: string | null;
 }
 
 export interface AdminUserDetail extends AdminUser {
@@ -99,6 +101,17 @@ export interface ListNotificationsResponse {
 }
 
 export type AdminSettings = Record<string, string | number | boolean | null>;
+export interface CreditLedgerEntry {
+  id: number;
+  username: string;
+  delta: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  reason: string | null;
+  createdBy: string | null;
+  requestId: string | null;
+  createdAt: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -189,7 +202,7 @@ export async function getAdminUser(username: string): Promise<AdminUserDetail> {
 
 export async function updateAdminUser(
   username: string,
-  updates: Partial<Pick<AdminUser, 'plan' | 'isActive' | 'isAdmin' | 'email'> & { password: string }>
+  updates: Partial<Pick<AdminUser, 'plan' | 'isActive' | 'isAdmin' | 'email' | 'extraCredits'> & { password: string }>
 ): Promise<AdminUser> {
   return adminFetch<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}`, {
     method: 'PATCH',
@@ -208,6 +221,36 @@ export async function resetUserUsage(username: string): Promise<{ ok: boolean; u
     `/api/admin/users/${encodeURIComponent(username)}/reset-usage`,
     { method: 'POST' }
   );
+}
+
+export async function addAdminUserCredits(
+  username: string,
+  data: { amount: number; reason?: string; requestId?: string }
+): Promise<{
+  ok: boolean;
+  username: string;
+  requestId: string;
+  added: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  ledgerEntryId: number;
+  idempotent?: boolean;
+}> {
+  return adminFetch(`/api/admin/users/${encodeURIComponent(username)}/credits/add`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listAdminUserCreditsLedger(
+  username: string,
+  params?: { limit?: number; offset?: number }
+): Promise<{ username: string; currentBalance: number; entries: CreditLedgerEntry[]; total: number }> {
+  const qs = new URLSearchParams();
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+  return adminFetch(`/api/admin/users/${encodeURIComponent(username)}/credits/ledger${query}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +360,28 @@ export async function createAdminToken(data: {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Billing / Stripe sync API
+// ---------------------------------------------------------------------------
+
+export interface BillingSyncResponse {
+  synced: number;
+  total: number;
+  results: Array<{ username: string; plan?: string; changed?: boolean; error?: string }>;
+}
+
+export async function syncBillingStripe(): Promise<BillingSyncResponse> {
+  return adminFetch<BillingSyncResponse>('/api/admin/billing/sync', { method: 'POST' });
+}
+
+export interface BillingSubscriptionStatusResponse {
+  statusByUser: Record<string, { periodEnd?: string | null; status?: string | null; stripeCustomerId?: string; error?: boolean }>;
+}
+
+export async function getBillingSubscriptionStatus(): Promise<BillingSubscriptionStatusResponse> {
+  return adminFetch<BillingSubscriptionStatusResponse>('/api/admin/billing/subscription-status');
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-import { callLLM, callLLMStream } from '@/services/llm/client';
-import { callServerLlm, callServerLlmStream } from '@/services/llm/llmProxyClient';
+import { callLLM, callLLMStream, callGeminiMultimodal, type MultimodalPart } from '@/services/llm/client';
+import { callServerLlm, callServerLlmStream, callServerLlmMultimodal } from '@/services/llm/llmProxyClient';
 import type { RouteLLMActivity } from '@/services/llm/routeLLM';
 import { getRouteCandidateOptions, type RouteLLMOptions } from '@/services/llm/routeLLM';
+import { GEMINI_MULTIMODAL_MODEL } from '@/lib/constants';
 
 type Message = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -19,6 +20,11 @@ function shouldFallback(err: unknown): boolean {
   const msg = String(err instanceof Error ? err.message : err).toLowerCase();
   return (
     msg.includes('429')
+    || msg.includes('401')
+    || msg.includes('unauthorized')
+    || msg.includes('missing authentication')
+    || msg.includes('invalid api key')
+    || msg.includes('incorrect api key')
     || msg.includes(' 404')
     || msg.includes('not_found')
     || msg.includes('model is not found')
@@ -102,4 +108,45 @@ export async function callRoutedLLMStream(
   }
 
   throw (lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Falha desconhecida da LLM')));
+}
+
+/** Chama o modelo multimodal (YouTube/imagem). Usa sempre Gemini 2.5 Flash via proxy ou chave local. */
+export async function callRoutedMultimodal(
+  parts: MultimodalPart[],
+  options: { temperature?: number; maxTokens?: number } = {}
+): Promise<string> {
+  const { fetchLlmStatus, fetchLlmOptions } = await import('@/services/llm/llmProxyClient');
+  const useSettingsStore = (await import('@/stores/settings-store')).useSettingsStore;
+  const model = GEMINI_MULTIMODAL_MODEL;
+
+  try {
+    const status = await fetchLlmStatus();
+    if (status.configured) {
+      const opts = await fetchLlmOptions();
+      const hasGemini = opts.some((o) => o.provider === 'gemini');
+      if (hasGemini) {
+        return await callServerLlmMultimodal(parts, {
+          model,
+          temperature: options.temperature ?? 0.3,
+          maxTokens: options.maxTokens ?? 4096,
+        });
+      }
+    }
+  } catch {
+    // fallback to local
+  }
+
+  const apiKey = await useSettingsStore.getState().getApiKeyForProvider('gemini');
+  if (apiKey) {
+    return await callGeminiMultimodal(parts, {
+      apiKey,
+      model,
+      temperature: options.temperature ?? 0.3,
+      maxTokens: options.maxTokens ?? 4096,
+    });
+  }
+
+  throw new Error(
+    'Para usar YouTube ou imagem, configure a chave Gemini nas Configurações ou use o servidor com Gemini configurado.'
+  );
 }

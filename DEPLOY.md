@@ -54,3 +54,25 @@ chmod +x deploy.sh
 ```
 
 Ajuste `REMOTE_DIR` no script conforme o diretório real do app no servidor.
+
+
+## Deploy no Windows (PowerShell/CMD)
+
+### Credenciais
+- **Servidor:** 63.141.232.205
+- **Usuario:** usuario
+- **Senha:** Senh@01020304
+- **Diretorio remoto:** /home/usuario/3maps
+
+### Metodo rapido
+Execute: `.\deploy.ps1` ou `deploy.bat`
+
+### Passos manuais
+1. scp -o StrictHostKeyChecking=accept-new 3maps-deploy.tar.gz usuario@63.141.232.205:/home/usuario/
+2. ssh usuario@63.141.232.205
+3. cd /home/usuario/3maps ; tar -xzf ~/3maps-deploy.tar.gz -C . ; npm install --production ; pm2 restart 3maps
+
+### Automatizacao
+- sshpass: nao disponivel no Windows
+- plink: use PuTTY com -pw para senha
+- Ou configure chave SSH

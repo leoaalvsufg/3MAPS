@@ -9,8 +9,8 @@ import crypto from 'node:crypto';
 import { deleteMap, getMap, listMaps, putMap, validateMapId, validateUsername, getDataDir } from './storage.js';
 import { checkRateLimit } from './rateLimit.js';
 import { generateToken, verifyToken, verifyApiToken } from './auth.js';
-import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser } from './users.js';
-import { verifyFirebaseIdToken } from './firebaseAdmin.js';
+import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser, consumeExtraCredits, listCreditLedger, addExtraCredits } from './users.js';
+import { verifyFirebaseIdToken, isFirebaseAdminConfigured } from './firebaseAdmin.js';
 import { getUsage, incrementMapCount, incrementChatCount } from './usage.js';
 import { logger } from './logger.js';
 import { scheduleBackups, runBackup } from './backup.js';
@@ -29,9 +29,11 @@ import {
   handleMarkNotificationsRead,
   handleGetSettings,
   handleUpdateSettings,
+  handleAddUserCredits,
+  handleGetUserCreditsLedger,
 } from './admin.js';
 import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
-import { hasAnyLlmKey, getAvailableLlmOptions, proxyLlmComplete, proxyLlmStream, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
+import { hasAnyLlmKey, getLlmOptionsWithModels, proxyLlmComplete, proxyLlmStream, proxyLlmMultimodal, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
 import { getDb } from './db.js';
 import { getOpenApiSpec } from './openapi.js';
 
@@ -226,12 +228,11 @@ const VERSION = process.env.VERSION ?? '1.0.0';
  * In production, the frontend is served from the same origin as the API,
  * so no CORS headers are needed for same-origin requests (Origin header is absent).
  */
-const ALLOWED_ORIGINS = new Set(
-  (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,http://localhost:4173')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean)
-);
+const ALLOWED_ORIGINS_RAW = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+const ALLOWED_ORIGINS = new Set(ALLOWED_ORIGINS_RAW);
 
 /** Maximum allowed body size for PUT requests (5 MB). */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -274,17 +275,30 @@ function getSecurityHeaders() {
 /**
  * Returns the CORS headers for an allowed origin, or null if the origin is
  * not in the allowed list.
+ * In development, any http://localhost:* is allowed (Vite pode usar portas variadas).
  * @param {string | undefined} origin
  * @returns {Record<string, string> | null}
  */
 function getCorsHeaders(origin) {
-  if (!origin || !ALLOWED_ORIGINS.has(origin)) return null;
-  return {
-    'access-control-allow-origin': origin,
-    'access-control-allow-methods': 'GET,PUT,DELETE,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization',
-    'vary': 'Origin',
-  };
+  if (!origin) return null;
+  if (ALLOWED_ORIGINS.has(origin)) {
+    return {
+      'access-control-allow-origin': origin,
+      'access-control-allow-methods': 'GET,PUT,DELETE,POST,OPTIONS',
+      'access-control-allow-headers': 'content-type,authorization',
+      'vary': 'Origin',
+    };
+  }
+  // Em dev: permitir localhost e 127.0.0.1 em qualquer porta (Vite usa porta dinâmica)
+  if (!IS_PRODUCTION && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+    return {
+      'access-control-allow-origin': origin,
+      'access-control-allow-methods': 'GET,PUT,DELETE,POST,OPTIONS',
+      'access-control-allow-headers': 'content-type,authorization',
+      'vary': 'Origin',
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +479,19 @@ function resolveAppBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+/** Base URL para redirects Stripe (success/cancel). Prefere Origin (frontend real) em dev. */
+function resolveRedirectBaseUrl(req) {
+  const configured = String(getAdminSetting('app_url', process.env.APP_URL ?? '') ?? '').trim();
+  if (configured && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/, '');
+  }
+  const origin = req.headers.origin;
+  if (origin && /^https?:\/\/(localhost|127\.0\.0\.1|[^/]+)/i.test(origin)) {
+    return origin.replace(/\/+$/, '');
+  }
+  return resolveAppBaseUrl(req);
+}
+
 function getStripePriceId(plan) {
   if (plan === 'premium') {
     return String(
@@ -477,6 +504,13 @@ function getStripePriceId(plan) {
     ).trim();
   }
   return '';
+}
+
+/** Retorna o Price ID para pacote de créditos extras (ex: 5 créditos). */
+function getStripeCreditsPriceId() {
+  return String(
+    getAdminSetting('stripe_price_credits_5', process.env.STRIPE_PRICE_CREDITS_5 ?? '') ?? ''
+  ).trim();
 }
 
 /** Mapeia price ID Stripe -> plano interno. */
@@ -622,6 +656,59 @@ async function createStripeCheckoutSession({
   return { url: String(json.url), id: String(json.id ?? '') };
 }
 
+/** Checkout de pagamento único para créditos extras (mode: payment). */
+async function createStripeCreditsCheckoutSession({
+  secretKey,
+  priceId,
+  targetCredits,
+  username,
+  email,
+  customerId,
+  successUrl,
+  cancelUrl,
+}) {
+  const params = new URLSearchParams();
+  params.set('mode', 'payment');
+  params.set('line_items[0][price]', priceId);
+  params.set('line_items[0][quantity]', '1');
+  params.set('success_url', successUrl);
+  params.set('cancel_url', cancelUrl);
+  params.set('metadata[username]', username);
+  params.set('metadata[targetCredits]', String(targetCredits));
+  if (customerId && /^cus_/.test(customerId)) {
+    params.set('customer', customerId);
+  } else if (email) {
+    params.set('customer_email', email);
+  }
+
+  const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${secretKey}`,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: params.toString(),
+  });
+
+  const raw = await response.text();
+  let json = null;
+  try {
+    json = raw ? JSON.parse(raw) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok || !json?.url) {
+    let stripeError = json?.error?.message ?? `Stripe returned ${response.status}`;
+    if (typeof stripeError === 'string' && stripeError.toLowerCase().includes('no such price')) {
+      stripeError = 'Price ID de créditos inválido. Configure stripe_price_credits_5 no painel admin.';
+    }
+    throw new Error(String(stripeError));
+  }
+
+  return { url: String(json.url), id: String(json.id ?? '') };
+}
+
 // ---------------------------------------------------------------------------
 // Route matching
 // ---------------------------------------------------------------------------
@@ -744,11 +831,19 @@ const server = http.createServer(async (req, res) => {
     if (!req.url) return sendText(res, 400, 'Missing URL');
 
     const origin = req.headers['origin'];
+    const host = req.headers['host'];
     const corsHeaders = getCorsHeaders(origin);
+
+    // Same-origin: quando a requisição vem do mesmo host (ex: assets, API no mesmo domínio).
+    // Navegadores podem enviar Origin mesmo para recursos same-origin.
+    const isSameOrigin = origin && host && (
+      origin === `http://${host}` || origin === `https://${host}`
+    );
 
     // Reject requests from disallowed origins (non-browser requests without
     // an Origin header are still allowed for server-to-server use).
-    if (origin && !corsHeaders) {
+    // Same-origin requests are always allowed.
+    if (origin && !corsHeaders && !isSameOrigin) {
       return await sendJson(res, 403, { error: 'Origin not allowed' });
     }
 
@@ -831,7 +926,10 @@ const server = http.createServer(async (req, res) => {
         const user = await createUser(username, password);
         const token = await generateToken({ ...user, isAdmin: false });
         logActivity({ username, action: 'register', ip: req.socket?.remoteAddress });
-        return await sendJson(res, 201, { token, user }, corsHeaders ?? {});
+        return await sendJson(res, 201, {
+          token,
+          user: { ...user, isAdmin: false, plan: 'free', photoURL: null, extraCredits: 0 },
+        }, corsHeaders ?? {});
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Registration failed';
         // "Username already taken" → 409 Conflict
@@ -860,8 +958,30 @@ const server = http.createServer(async (req, res) => {
 
       logActivity({ username: user.username, action: 'login', ip: req.socket?.remoteAddress });
       const token = await generateToken(user);
-      // Return user info including isAdmin flag (without exposing it in the token payload directly)
-      return await sendJson(res, 200, { token, user: { userId: user.userId, username: user.username, isAdmin: user.isAdmin } }, corsHeaders ?? {});
+      // Sync plano Stripe e retornar com acesso correto
+      let plan = 'free';
+      let profile = null;
+      try {
+        profile = await getUser(user.username);
+        if (profile?.isAdmin) plan = 'admin';
+        else if (profile) {
+          const synced = await syncStripePlanAtLogin(profile);
+          plan = synced.plan;
+        }
+      } catch {
+        /* ignore */
+      }
+      return await sendJson(res, 200, {
+        token,
+        user: {
+          userId: user.userId,
+          username: user.username,
+          isAdmin: user.isAdmin,
+          plan,
+          photoURL: profile?.photoUrl ?? null,
+          extraCredits: profile?.extraCredits ?? 0,
+        },
+      }, corsHeaders ?? {});
     }
 
     // Firebase Auth — exchange Firebase ID token for app JWT
@@ -873,6 +993,11 @@ const server = http.createServer(async (req, res) => {
       if (!idToken || typeof idToken !== 'string') {
         return await sendJson(res, 400, { error: 'idToken é obrigatório' }, corsHeaders ?? {});
       }
+      if (!isFirebaseAdminConfigured()) {
+        return await sendJson(res, 503, {
+          error: 'Login social não configurado. Adicione server/firebase-service-account.json ao servidor.',
+        }, corsHeaders ?? {});
+      }
       const firebaseUser = await verifyFirebaseIdToken(idToken);
       if (!firebaseUser) {
         return await sendJson(res, 401, { error: 'Token inválido ou expirado' }, corsHeaders ?? {});
@@ -882,18 +1007,36 @@ const server = http.createServer(async (req, res) => {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
           displayName: firebaseUser.name,
+          picture: firebaseUser.picture,
         });
         const profile = await getUser(username);
         const isAdmin = profile?.isAdmin ?? false;
+        let plan = 'free';
+        if (profile?.isAdmin) plan = 'admin';
+        else if (profile) {
+          const synced = await syncStripePlanAtLogin(profile);
+          plan = synced.plan;
+        }
         logActivity({ username, action: 'login', ip: req.socket?.remoteAddress });
         const token = await generateToken({ userId, username, isAdmin });
         return await sendJson(res, 200, {
           token,
-          user: { userId, username, isAdmin },
+          user: {
+            userId,
+            username,
+            isAdmin,
+            plan,
+            photoURL: profile?.photoUrl ?? null,
+            extraCredits: profile?.extraCredits ?? 0,
+          },
         }, corsHeaders ?? {});
       } catch (e) {
-        logger.error('Firebase auth error', { error: String(e) });
-        return await sendJson(res, 500, { error: 'Erro ao criar sessão' }, corsHeaders ?? {});
+        const errMsg = e instanceof Error ? e.message : String(e);
+        logger.error('Firebase auth error', { error: errMsg, stack: e instanceof Error ? e.stack : undefined });
+        const userMessage = IS_PRODUCTION
+          ? 'Erro ao criar sessão'
+          : `Erro ao criar sessão: ${errMsg}`;
+        return await sendJson(res, 500, { error: userMessage }, corsHeaders ?? {});
       }
     }
 
@@ -919,12 +1062,16 @@ const server = http.createServer(async (req, res) => {
         const synced = await syncStripePlanAtLogin(freshUser);
         plan = synced.plan;
       }
+      const photoURL = freshUser?.photoUrl ?? null;
+      const extraCredits = freshUser?.extraCredits ?? 0;
       return await sendJson(res, 200, {
         user: {
           userId: payload.userId,
           username: payload.username,
           isAdmin: payload.isAdmin ?? false,
           plan,
+          photoURL,
+          extraCredits,
         },
       }, corsHeaders ?? {});
     }
@@ -1118,6 +1265,12 @@ const server = http.createServer(async (req, res) => {
           return await sendJson(res, 400, { error: 'Conta indisponível.' }, corsHeaders ?? {});
         }
 
+        let plan = userProfile.isAdmin ? 'admin' : (userProfile.plan ?? 'free');
+        if (!userProfile.isAdmin) {
+          const synced = await syncStripePlanAtLogin(userProfile);
+          plan = synced.plan;
+        }
+
         const jwt = await generateToken({
           userId: userProfile.userId,
           username: userProfile.username,
@@ -1131,7 +1284,9 @@ const server = http.createServer(async (req, res) => {
             userId: userProfile.userId,
             username: userProfile.username,
             isAdmin: userProfile.isAdmin ?? false,
-            plan: userProfile.plan ?? 'free',
+            plan,
+            photoURL: userProfile.photoUrl ?? null,
+            extraCredits: userProfile.extraCredits ?? 0,
           },
         }, corsHeaders ?? {});
       } catch (err) {
@@ -1148,6 +1303,126 @@ const server = http.createServer(async (req, res) => {
       const authUser = await getAuthUser(req);
       if (!isAdminUser(authUser)) {
         return await sendJson(res, 403, { error: 'Admin access required' }, corsHeaders ?? {});
+      }
+
+      // POST /api/admin/users/:username/credits/add — PRIMEIRO (evita conflito com outras rotas)
+      const creditsAddMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/credits\/add\/?$/);
+      if (creditsAddMatch && req.method === 'POST') {
+        let targetUsername;
+        try {
+          targetUsername = decodeURIComponent(creditsAddMatch[1]);
+        } catch {
+          return await sendJson(res, 400, { error: 'Invalid username in URL' }, corsHeaders ?? {});
+        }
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+        try {
+          const result = await handleAddUserCredits(targetUsername, parsed.body ?? {}, authUser.username);
+          if (!result) return await sendJson(res, 404, { error: 'User not found' }, corsHeaders ?? {});
+          logActivity({
+            username: authUser.username,
+            action: 'admin_add_credits',
+            details: {
+              targetUsername,
+              added: result.added,
+              balanceBefore: result.balanceBefore,
+              balanceAfter: result.balanceAfter,
+              ledgerEntryId: result.ledgerEntryId,
+            },
+          });
+          return await sendJson(res, 200, result, corsHeaders ?? {});
+        } catch (e) {
+          return await sendJson(res, 400, { error: e instanceof Error ? e.message : 'Credit add failed' }, corsHeaders ?? {});
+        }
+      }
+
+      // GET /api/admin/users/:username/credits/ledger
+      const creditsLedgerMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/credits\/ledger\/?$/);
+      if (creditsLedgerMatch && req.method === 'GET') {
+        let targetUsername;
+        try {
+          targetUsername = decodeURIComponent(creditsLedgerMatch[1]);
+        } catch {
+          return await sendJson(res, 400, { error: 'Invalid username in URL' }, corsHeaders ?? {});
+        }
+        const result = await handleGetUserCreditsLedger(targetUsername, url);
+        if (!result) return await sendJson(res, 404, { error: 'User not found' }, corsHeaders ?? {});
+        return await sendJson(res, 200, result, corsHeaders ?? {});
+      }
+
+      // POST /api/admin/billing/sync — sincronizar planos com Stripe (antes de rotas dinâmicas)
+      if (url.pathname === '/api/admin/billing/sync' && req.method === 'POST') {
+        try {
+          const { users } = await listUsers({ limit: 500, offset: 0, search: '' });
+          const stripeSecretKey = String(
+            getAdminSetting('stripe_secret_key', process.env.STRIPE_SECRET_KEY ?? '') ?? ''
+          ).trim();
+          if (!stripeSecretKey) {
+            return await sendJson(res, 400, { error: 'Stripe não configurado' }, corsHeaders ?? {});
+          }
+          const results = [];
+          let synced = 0;
+          for (const u of users) {
+            if (!u.stripeCustomerId || u.isAdmin) continue;
+            try {
+              const syncedPlan = await syncStripePlanAtLogin(u);
+              const changed = syncedPlan.plan !== (u.plan ?? 'free');
+              if (changed) synced++;
+              results.push({ username: u.username, plan: syncedPlan.plan, changed });
+            } catch (err) {
+              results.push({ username: u.username, error: err instanceof Error ? err.message : String(err) });
+            }
+          }
+          logActivity({ username: authUser.username, action: 'admin_billing_sync', details: { synced, total: results.length } });
+          return await sendJson(res, 200, { synced, total: results.length, results }, corsHeaders ?? {});
+        } catch (e) {
+          return await sendJson(res, 500, { error: e instanceof Error ? e.message : 'Erro ao sincronizar' }, corsHeaders ?? {});
+        }
+      }
+
+      // GET /api/admin/billing/subscription-status
+      if (url.pathname === '/api/admin/billing/subscription-status' && req.method === 'GET') {
+        try {
+          const { users } = await listUsers({ limit: 500, offset: 0, search: '' });
+          const stripeSecretKey = String(
+            getAdminSetting('stripe_secret_key', process.env.STRIPE_SECRET_KEY ?? '') ?? ''
+          ).trim();
+          if (!stripeSecretKey) {
+            return await sendJson(res, 200, { statusByUser: {} }, corsHeaders ?? {});
+          }
+          const statusByUser = {};
+          for (const u of users) {
+            if (!u.stripeCustomerId || u.isAdmin) continue;
+            try {
+              const params = new URLSearchParams();
+              params.set('customer', u.stripeCustomerId);
+              params.set('status', 'all');
+              params.set('limit', '5');
+              const resp = await fetch(
+                `https://api.stripe.com/v1/subscriptions?${params.toString()}`,
+                { method: 'GET', headers: { authorization: `Bearer ${stripeSecretKey}` } }
+              );
+              const raw = await resp.text();
+              const json = raw ? JSON.parse(raw) : null;
+              const subs = json?.data ?? [];
+              let periodEnd = null;
+              let status = null;
+              if (subs.length > 0) {
+                const active = subs.find((s) => s.status === 'active');
+                const sub = active ?? subs[0];
+                status = sub.status ?? null;
+                const end = sub.current_period_end;
+                if (typeof end === 'number') periodEnd = new Date(end * 1000).toISOString().slice(0, 10);
+              }
+              statusByUser[u.username] = { periodEnd, status, stripeCustomerId: u.stripeCustomerId };
+            } catch {
+              statusByUser[u.username] = { error: true };
+            }
+          }
+          return await sendJson(res, 200, { statusByUser }, corsHeaders ?? {});
+        } catch (e) {
+          return await sendJson(res, 500, { error: e instanceof Error ? e.message : 'Erro' }, corsHeaders ?? {});
+        }
       }
 
       // GET /api/admin/stats
@@ -1347,6 +1622,37 @@ const server = http.createServer(async (req, res) => {
           if (!result) return await sendJson(res, 404, { error: 'User not found' }, corsHeaders ?? {});
           return await sendJson(res, 200, result, corsHeaders ?? {});
         }
+
+        // POST /api/admin/users/:username/credits/add
+        if (req.method === 'POST' && subPath === '/credits/add') {
+          const parsed = await readJsonBody(req);
+          if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+          try {
+            const result = await handleAddUserCredits(targetUsername, parsed.body ?? {}, authUser.username);
+            if (!result) return await sendJson(res, 404, { error: 'User not found' }, corsHeaders ?? {});
+            logActivity({
+              username: authUser.username,
+              action: 'admin_add_credits',
+              details: {
+                targetUsername,
+                added: result.added,
+                balanceBefore: result.balanceBefore,
+                balanceAfter: result.balanceAfter,
+                ledgerEntryId: result.ledgerEntryId,
+              },
+            });
+            return await sendJson(res, 200, result, corsHeaders ?? {});
+          } catch (e) {
+            return await sendJson(res, 400, { error: e instanceof Error ? e.message : 'Credit add failed' }, corsHeaders ?? {});
+          }
+        }
+
+        // GET /api/admin/users/:username/credits/ledger
+        if (req.method === 'GET' && subPath === '/credits/ledger') {
+          const result = await handleGetUserCreditsLedger(targetUsername, url);
+          if (!result) return await sendJson(res, 404, { error: 'User not found' }, corsHeaders ?? {});
+          return await sendJson(res, 200, result, corsHeaders ?? {});
+        }
       }
 
       return await sendJson(res, 404, { error: 'Admin route not found' }, corsHeaders ?? {});
@@ -1362,8 +1668,38 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/llm/options' && req.method === 'GET') {
-      const options = getAvailableLlmOptions();
-      return await sendJson(res, 200, { options }, corsHeaders ?? {});
+      const { options, providerModels } = getLlmOptionsWithModels();
+      return await sendJson(res, 200, { options, providerModels }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/llm/multimodal' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      if (!hasAnyLlmKey()) {
+        return await sendJson(res, 503, {
+          error: 'Configure as chaves de API no painel administrativo antes de usar a geração de mapas.',
+        }, corsHeaders ?? {});
+      }
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error ?? 'Invalid JSON' }, corsHeaders ?? {});
+      const { model, parts, temperature, maxTokens } = parsed.body ?? {};
+      if (!Array.isArray(parts) || parts.length === 0) {
+        return await sendJson(res, 400, { error: 'parts é obrigatório e deve ser um array não vazio' }, corsHeaders ?? {});
+      }
+      try {
+        const content = await proxyLlmMultimodal({
+          model: model ?? 'gemini-2.5-flash',
+          parts,
+          temperature: temperature ?? 0.3,
+          maxTokens: maxTokens ?? 4096,
+        });
+        return await sendJson(res, 200, { content }, corsHeaders ?? {});
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
+      }
     }
 
     if (url.pathname === '/api/llm/complete' && req.method === 'POST') {
@@ -1449,24 +1785,24 @@ const server = http.createServer(async (req, res) => {
       }
       const username = authUser.username;
       const usage = await getUsage(username);
+      const profile = await getUser(username);
       // Get plan from user profile (falls back to 'free' for unauthenticated)
       let planId = 'free';
       if (username !== 'local') {
         try {
-          const profile = await getUser(username);
           planId = profile?.isAdmin ? 'admin' : (profile?.plan ?? 'free');
         } catch {
           planId = 'free';
         }
       }
       const limits = getPlanLimits(planId);
-      return await sendJson(res, 200, { usage, limits }, corsHeaders ?? {});
+      return await sendJson(res, 200, { usage, limits, extraCredits: profile?.extraCredits ?? 0 }, corsHeaders ?? {});
     }
 
     if (url.pathname === '/api/usage/check' && req.method === 'POST') {
       const parsed = await readJsonBody(req);
       if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
-      const { action, mapId, format } = parsed.body ?? {};
+      const { action, mapId, format, generationMode } = parsed.body ?? {};
 
       const authUser = await getAuthUser(req);
       if (authUser.username === 'local') {
@@ -1487,6 +1823,8 @@ const server = http.createServer(async (req, res) => {
       const usage = await getUsage(username);
 
       if (action === 'create_map') {
+        const effectiveGenerationMode = generationMode === 'deep' ? 'deep' : 'normal';
+        const profile = await getUser(username);
         if (limits.maxMapsStored !== -1) {
           const allMaps = await listMaps(username);
           const remainingStorage = limits.maxMapsStored - allMaps.length;
@@ -1509,7 +1847,24 @@ const server = http.createServer(async (req, res) => {
             remaining: 0,
           }, corsHeaders ?? {});
         }
-        return await sendJson(res, 200, { allowed: true, remaining }, corsHeaders ?? {});
+        if (effectiveGenerationMode === 'deep') {
+          const extraCredits = profile?.extraCredits ?? 0;
+          if (extraCredits < 2) {
+            return await sendJson(res, 200, {
+              allowed: false,
+              reason: 'Modo aprofundado requer 2 créditos extras. Adquira créditos para continuar.',
+              remaining: 0,
+              extraCredits,
+              requiredExtraCredits: 2,
+            }, corsHeaders ?? {});
+          }
+        }
+        return await sendJson(res, 200, {
+          allowed: true,
+          remaining,
+          extraCredits: profile?.extraCredits ?? 0,
+          requiredExtraCredits: effectiveGenerationMode === 'deep' ? 2 : 0,
+        }, corsHeaders ?? {});
       }
 
       if (action === 'chat_message') {
@@ -1541,6 +1896,71 @@ const server = http.createServer(async (req, res) => {
       }
 
       return await sendJson(res, 400, { error: 'Unknown action' }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/usage/map-generation' && req.method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return await sendJson(res, 400, { error: parsed.error }, corsHeaders ?? {});
+      const generationMode = parsed.body?.generationMode === 'deep' ? 'deep' : 'normal';
+      const requestId = typeof parsed.body?.requestId === 'string' ? parsed.body.requestId : '';
+
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+
+      if (generationMode !== 'deep') {
+        const profile = await getUser(authUser.username);
+        return await sendJson(res, 200, {
+          ok: true,
+          consumedExtraCredits: 0,
+          remainingExtraCredits: profile?.extraCredits ?? 0,
+        }, corsHeaders ?? {});
+      }
+
+      const consumed = consumeExtraCredits(authUser.username, 2, {
+        reason: 'Geração em modo aprofundado',
+        createdBy: 'system',
+        requestId: requestId || null,
+      });
+      if (!consumed.ok) {
+        return await sendJson(res, 409, {
+          error: 'Saldo insuficiente de créditos extras para modo aprofundado.',
+          remainingExtraCredits: consumed.remaining,
+          requiredExtraCredits: 2,
+        }, corsHeaders ?? {});
+      }
+
+      logActivity({
+        username: authUser.username,
+        action: 'deep_mode_credits_consumed',
+        details: { amount: 2, remaining: consumed.remaining },
+        ip: req.socket?.remoteAddress,
+      });
+
+      return await sendJson(res, 200, {
+        ok: true,
+        consumedExtraCredits: 2,
+        remainingExtraCredits: consumed.remaining,
+        ledgerEntryId: consumed.ledgerEntryId ?? null,
+        idempotent: consumed.idempotent === true,
+      }, corsHeaders ?? {});
+    }
+
+    if (url.pathname === '/api/usage/credits/ledger' && req.method === 'GET') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '30', 10)));
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10));
+      const profile = await getUser(authUser.username);
+      const ledger = listCreditLedger(authUser.username, { limit, offset });
+      return await sendJson(res, 200, {
+        username: authUser.username,
+        currentBalance: profile?.extraCredits ?? 0,
+        ...ledger,
+      }, corsHeaders ?? {});
     }
 
     if (url.pathname === '/api/usage/chat-message' && req.method === 'POST') {
@@ -1628,8 +2048,30 @@ const server = http.createServer(async (req, res) => {
         const session = event.data?.object;
         const username = session?.metadata?.username;
         const targetPlan = (session?.metadata?.targetPlan ?? '').toLowerCase();
+        const targetCredits = parseInt(session?.metadata?.targetCredits ?? '0', 10);
         const customerId = typeof session?.customer === 'string' ? session.customer : null;
-        if (username && (targetPlan === 'premium' || targetPlan === 'enterprise')) {
+
+        if (username && targetCredits > 0) {
+          try {
+            const profile = await getUser(username);
+            if (profile && !profile.isAdmin) {
+              addExtraCredits(username, targetCredits, {
+                reason: 'Compra via Stripe',
+                createdBy: 'stripe_webhook',
+              });
+              if (customerId) await updateUser(username, { stripeCustomerId: customerId });
+              logActivity({ username, action: 'billing_credits_purchased', details: { credits: targetCredits } });
+              logger.info('User credits added via Stripe webhook', { username, credits: targetCredits });
+            }
+          } catch (err) {
+            logger.error('Failed to add credits from webhook', {
+              username,
+              credits: targetCredits,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            return await sendJson(res, 500, { error: 'Erro ao adicionar créditos' }, corsHeaders ?? {});
+          }
+        } else if (username && (targetPlan === 'premium' || targetPlan === 'enterprise')) {
           try {
             const profile = await getUser(username);
             if (profile && !profile.isAdmin) {
@@ -1662,11 +2104,6 @@ const server = http.createServer(async (req, res) => {
         return await sendJson(res, 401, { error: 'Login obrigatório para iniciar pagamento' }, corsHeaders ?? {});
       }
 
-      const requestedPlan = String(parsed.body?.plan ?? 'premium').toLowerCase();
-      if (requestedPlan !== 'premium' && requestedPlan !== 'enterprise') {
-        return await sendJson(res, 400, { error: 'Plano inválido para checkout' }, corsHeaders ?? {});
-      }
-
       const profile = await getUser(authUser.username);
       if (!profile) return await sendJson(res, 404, { error: 'Usuário não encontrado' }, corsHeaders ?? {});
       if (profile.isAdmin) {
@@ -1678,6 +2115,62 @@ const server = http.createServer(async (req, res) => {
       ).trim();
       if (!stripeSecretKey) {
         return await sendJson(res, 400, { error: 'Stripe não configurado: chave secreta ausente' }, corsHeaders ?? {});
+      }
+
+      const baseUrl = resolveRedirectBaseUrl(req);
+      const checkoutType = String(parsed.body?.type ?? 'plan').toLowerCase();
+
+      if (checkoutType === 'credits') {
+        const amount = 5;
+        const stripePriceId = getStripeCreditsPriceId();
+        if (!stripePriceId) {
+          return await sendJson(res, 400, {
+            error: 'Stripe não configurado: price ID de créditos (stripe_price_credits_5) ausente. Configure no painel admin.',
+          }, corsHeaders ?? {});
+        }
+        if (stripePriceId.startsWith('prod_') || !stripePriceId.startsWith('price_')) {
+          return await sendJson(res, 400, {
+            error: 'Price ID de créditos inválido. Use um Price ID (price_...) no painel admin.',
+          }, corsHeaders ?? {});
+        }
+
+        const successUrl = `${baseUrl}/profile?credits=success`;
+        const cancelUrl = `${baseUrl}/profile?credits=cancelled`;
+
+        try {
+          const session = await createStripeCreditsCheckoutSession({
+            secretKey: stripeSecretKey,
+            priceId: stripePriceId,
+            targetCredits: amount,
+            username: authUser.username,
+            email: profile.email ?? null,
+            customerId: profile.stripeCustomerId ?? null,
+            successUrl,
+            cancelUrl,
+          });
+
+          logActivity({
+            username: authUser.username,
+            action: 'billing_credits_checkout_created',
+            details: { credits: amount, sessionId: session.id || null },
+          });
+
+          return await sendJson(res, 200, { url: session.url }, corsHeaders ?? {});
+        } catch (err) {
+          logger.error('Stripe credits checkout creation failed', {
+            username: authUser.username,
+            credits: amount,
+            message: err instanceof Error ? err.message : String(err),
+          });
+          return await sendJson(res, 502, {
+            error: err instanceof Error ? err.message : 'Erro ao iniciar checkout de créditos',
+          }, corsHeaders ?? {});
+        }
+      }
+
+      const requestedPlan = String(parsed.body?.plan ?? 'premium').toLowerCase();
+      if (requestedPlan !== 'premium' && requestedPlan !== 'enterprise') {
+        return await sendJson(res, 400, { error: 'Plano inválido para checkout' }, corsHeaders ?? {});
       }
 
       const stripePriceId = getStripePriceId(requestedPlan);
@@ -1695,7 +2188,6 @@ const server = http.createServer(async (req, res) => {
         }, corsHeaders ?? {});
       }
 
-      const baseUrl = resolveAppBaseUrl(req);
       const successUrl = `${baseUrl}/thank-you?plan=${encodeURIComponent(requestedPlan)}`;
       const cancelUrl = `${baseUrl}/settings?billing=cancelled`;
 

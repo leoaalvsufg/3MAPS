@@ -9,13 +9,16 @@ import type {
 } from '@/types/mindmap';
 import type { TemplateId } from '@/types/templates';
 import { parseJSON } from './client';
-import { callRoutedLLM } from './routedClient';
+import { callRoutedLLM, callRoutedMultimodal } from './routedClient';
 import {
   getAnalysisPrompt,
-	getDeepThoughtPreflightPrompt,
+  getDeepThoughtPreflightPrompt,
   getQueryRefinementPrompt,
   getMindMapPrompt,
   getArticlePrompt,
+  getDeepGuideArticlePrompt,
+  getYouTubeAnalysisPrompt,
+  getImageAnalysisPrompt,
 } from './prompts';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import { useMapsStore } from '@/stores/maps-store';
@@ -55,14 +58,21 @@ export interface GenerationCallbacks {
   onProgress: (progress: number, step: string) => void;
   onError: (error: string) => void;
   onComplete: (mapId: string) => void;
-	onRequestClarification?: (req: ClarificationRequest) => Promise<ClarificationResponse | null>;
+  onRequestClarification?: (req: ClarificationRequest) => Promise<ClarificationResponse | null>;
 }
+
+export type AttachmentInput =
+  | { type: 'youtube'; url: string }
+  | { type: 'image'; base64: string; mimeType: string };
+export type GenerationMode = 'normal' | 'deep';
 
 export async function generateMindMap(
   query: string,
   templateId: TemplateId,
   generateImage: boolean,
-  callbacks: GenerationCallbacks
+  callbacks: GenerationCallbacks,
+  attachment?: AttachmentInput,
+  generationMode: GenerationMode = 'normal'
 ): Promise<void> {
   const { onProgress, onError, onComplete } = callbacks;
   const settings = useSettingsStore.getState();
@@ -76,7 +86,7 @@ export async function generateMindMap(
   // Check if the user is allowed to create a new map
   try {
     const usageStore = useUsageStore.getState();
-    const check = await usageStore.checkAction('create_map');
+    const check = await usageStore.checkAction('create_map', { generationMode });
     if (!check.allowed) {
       onError(check.reason ?? 'Limite do plano gratuito atingido. Faça upgrade para continuar.');
       return;
@@ -86,14 +96,19 @@ export async function generateMindMap(
   }
 
   try {
-		let effectiveQuery = query;
-		let graphType: GraphType = 'mindmap';
-		let sources: DeepThoughtSource[] | undefined;
-		let mermaid: MermaidDiagram | undefined;
-		let extraContext = '';
+    if (generationMode === 'deep') {
+      const requestId = `deep-gen-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      await useUsageStore.getState().consumeMapGenerationCredits('deep', requestId);
+    }
 
-		// Stage 0 (optional): pensamento_profundo preflight
-		if (templateId === 'pensamento_profundo') {
+    let effectiveQuery = query;
+    const graphType: GraphType = 'mindmap';
+    let sources: DeepThoughtSource[] | undefined;
+    let mermaid: MermaidDiagram | undefined;
+    let extraContext = '';
+
+    // Stage 0: avaliação prévia (obrigatória em modo aprofundado; opcional no template pensamento_profundo)
+    if (generationMode === 'deep' || templateId === 'pensamento_profundo') {
 			onProgress(5, 'Pensamento profundo: levantando fontes e contexto...');
 			mapsStore.setGenerationStatus('analyzing');
 
@@ -169,17 +184,41 @@ export async function generateMindMap(
     onProgress(10, 'Analisando conteúdo...');
     mapsStore.setGenerationStatus('analyzing');
 
-    const analysisText = await callRoutedLLM(
-			'analysis',
-			[{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
-      { temperature: 0.3, maxTokens: 4096 }
-    );
+    let analysisText: string;
+    if (attachment) {
+      if (attachment.type === 'youtube') {
+        const prompt = getYouTubeAnalysisPrompt(attachment.url, effectiveQuery);
+        analysisText = await callRoutedMultimodal([{ text: prompt }], {
+          temperature: 0.3,
+          maxTokens: 4096,
+        });
+      } else {
+        const prompt = getImageAnalysisPrompt(effectiveQuery);
+        analysisText = await callRoutedMultimodal(
+          [
+            { inlineData: { mimeType: attachment.mimeType, data: attachment.base64 } },
+            { text: prompt },
+          ],
+          { temperature: 0.3, maxTokens: 4096 }
+        );
+      }
+    } else {
+      analysisText = await callRoutedLLM(
+        'analysis',
+        [{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
+        { temperature: 0.3, maxTokens: 4096 }
+      );
+    }
 
     const analysis = parseJSON<AnalysisResult>(analysisText);
     onProgress(30, 'Análise concluída. Gerando mapa mental...');
 
     // Stage 2 & 3: Mind map + Article (parallel) — cada um pode usar rota própria (custo/benefício)
     mapsStore.setGenerationStatus('generating');
+
+    const articlePrompt = generationMode === 'deep'
+      ? getDeepGuideArticlePrompt(analysis.central_theme, extraContext)
+      : getArticlePrompt(analysis);
 
     const [mindMapText, articleText] = await Promise.all([
       callRoutedLLM(
@@ -189,7 +228,7 @@ export async function generateMindMap(
       ),
       callRoutedLLM(
 				'article',
-        [{ role: 'user', content: getArticlePrompt(analysis) }],
+        [{ role: 'user', content: articlePrompt }],
         { temperature: 0.7, maxTokens: 4000 }
       ),
     ]);
@@ -211,6 +250,10 @@ export async function generateMindMap(
     }
 
     // normalizeMindElixirData already ensures ids/topic/children and distributes root children.
+    // For YouTube-based generation, enrich the root node with thumbnail + clickable link.
+    if (attachment?.type === 'youtube') {
+      mindElixirData = attachYouTubeMetadataToRoot(mindElixirData, attachment.url);
+    }
 
     // Stage 4: Image (optional) — chave Replicate no servidor
     let imageUrl: string | undefined;
@@ -230,6 +273,10 @@ export async function generateMindMap(
 	      title: analysis.central_theme,
 	      coverUrl: generateImage ? imageUrl : undefined,
 	    });
+    const deepArticleSources = generationMode === 'deep'
+      ? extractSourcesFromArticleMarkdown(finalArticle)
+      : [];
+    const mergedSources = mergeDeepThoughtSources(sources, deepArticleSources);
 
     onProgress(95, 'Salvando mapa...');
 
@@ -245,7 +292,7 @@ export async function generateMindMap(
       mindElixirData,
 	      article: finalArticle,
       imageUrl,
-			sources,
+			...(mergedSources.length > 0 ? { sources: mergedSources } : {}),
 			mermaid,
       tags: analysis.suggested_tags ?? [],
       createdAt: now,
@@ -300,6 +347,101 @@ function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?
   // Normalize excessive blank lines.
   md = md.replace(/\n{3,}/g, '\n\n').trim();
   return `${md}\n`;
+}
+
+function extractSourcesFromArticleMarkdown(article: string): DeepThoughtSource[] {
+  const text = (article ?? '').trim();
+  if (!text) return [];
+
+  const refsSectionMatch = text.match(
+    /(^|\n)##\s*6\.\s*Referências Bibliográficas[\s\S]*$/im
+  );
+  const refsSection = refsSectionMatch ? refsSectionMatch[0] : text;
+
+  const byKey = new Map<string, DeepThoughtSource>();
+  const addSource = (source: DeepThoughtSource) => {
+    const title = (source.title ?? '').trim();
+    const url = (source.url ?? '').trim();
+    if (!title && !url) return;
+    const key = (url || title).toLowerCase();
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        title: title || url,
+        ...(url ? { url } : {}),
+        type: source.type ?? 'doc',
+        why: source.why ?? 'Referência extraída automaticamente do artigo aprofundado.',
+      });
+    }
+  };
+
+  // Markdown links: [Title](https://...)
+  const markdownLinkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+  for (const m of refsSection.matchAll(markdownLinkRe)) {
+    addSource({ title: m[1], url: m[2], type: 'doc' });
+  }
+
+  // Bare URLs in lines (fallback)
+  const lines = refsSection.split(/\r?\n/);
+  const urlRe = /(https?:\/\/[^\s)]+)/i;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const urlMatch = trimmed.match(urlRe);
+    if (!urlMatch) continue;
+    const url = urlMatch[1];
+    const title = trimmed
+      .replace(/^[-*+\d.\s]+/, '')
+      .replace(url, '')
+      .replace(/^[\s:.-]+|[\s:.-]+$/g, '')
+      .trim();
+    addSource({ title: title || url, url, type: 'doc' });
+  }
+
+  return Array.from(byKey.values()).slice(0, 20);
+}
+
+function mergeDeepThoughtSources(
+  baseSources: DeepThoughtSource[] | undefined,
+  articleSources: DeepThoughtSource[]
+): DeepThoughtSource[] {
+  const byKey = new Map<string, DeepThoughtSource>();
+  for (const src of [...(baseSources ?? []), ...articleSources]) {
+    const title = (src.title ?? '').trim();
+    const url = (src.url ?? '').trim();
+    if (!title && !url) continue;
+    const key = (url || title).toLowerCase();
+    const prev = byKey.get(key);
+    byKey.set(key, {
+      ...(prev ?? {}),
+      ...src,
+      title: title || prev?.title || url,
+      ...(url ? { url } : prev?.url ? { url: prev.url } : {}),
+    });
+  }
+  return Array.from(byKey.values());
+}
+
+function extractYouTubeVideoId(url: string): string | null {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match?.[1] ?? null;
+}
+
+function getYouTubeThumbnailUrl(videoUrl: string): string | null {
+  const id = extractYouTubeVideoId(videoUrl);
+  if (!id) return null;
+  return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+}
+
+function attachYouTubeMetadataToRoot(data: MindElixirData, videoUrl: string): MindElixirData {
+  const thumb = getYouTubeThumbnailUrl(videoUrl);
+  return {
+    ...data,
+    nodeData: {
+      ...data.nodeData,
+      hyperLink: videoUrl,
+      ...(thumb ? { thumbnailUrl: thumb } : {}),
+    },
+  };
 }
 
 async function generateReplicateImageViaServer(theme: string): Promise<string> {

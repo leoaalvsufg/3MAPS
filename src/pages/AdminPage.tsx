@@ -12,11 +12,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth-store';
+import { useUsageStore } from '@/stores/usage-store';
 import {
   getAdminStats,
   listAdminUsers,
   createAdminUser,
   updateAdminUser,
+  addAdminUserCredits,
+  listAdminUserCreditsLedger,
   deleteAdminUser,
   resetUserUsage,
   listAdminLogs,
@@ -28,6 +31,8 @@ import {
   createAdminToken,
   revokeAdminToken,
   getAdminLlmCredits,
+  syncBillingStripe,
+  getBillingSubscriptionStatus,
   type AdminUser,
   type AdminStats,
   type ListUsersResponse,
@@ -35,6 +40,7 @@ import {
   type AdminNotification,
   type AdminSettings,
   type ApiToken,
+  type CreditLedgerEntry,
   type LlmCredits,
 } from '@/services/api/adminApi';
 import { Button } from '@/components/ui/button';
@@ -80,6 +86,8 @@ import {
   Info,
   SlidersHorizontal,
   Key,
+  RotateCw,
+  X,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -164,10 +172,27 @@ interface EditUserDialogProps {
   user: AdminUser | null;
   onClose: () => void;
   onSave: (username: string, updates: Partial<AdminUser & { password: string }>) => Promise<void>;
+  onAddCredits: (username: string, amount: number, reason?: string) => Promise<{
+    ok: boolean;
+    username: string;
+    requestId: string;
+    added: number;
+    balanceBefore: number;
+    balanceAfter: number;
+    ledgerEntryId: number;
+    idempotent?: boolean;
+  }>;
+  onLoadLedger: (username: string) => Promise<CreditLedgerEntry[]>;
 }
 
-function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
+function EditUserDialog({ user, onClose, onSave, onAddCredits, onLoadLedger }: EditUserDialogProps) {
   const [plan, setPlan] = useState(user?.plan ?? 'free');
+  const [currentCredits, setCurrentCredits] = useState<number>(user?.extraCredits ?? 0);
+  const [creditsToAdd, setCreditsToAdd] = useState<number>(0);
+  const [creditReason, setCreditReason] = useState('Ajuste manual no painel admin');
+  const [creditsLoading, setCreditsLoading] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerEntries, setLedgerEntries] = useState<CreditLedgerEntry[]>([]);
   const [isActive, setIsActive] = useState(user?.isActive ?? true);
   const [isAdmin, setIsAdmin] = useState(user?.isAdmin ?? false);
   const [email, setEmail] = useState(user?.email ?? '');
@@ -178,20 +203,33 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
   useEffect(() => {
     if (user) {
       setPlan(user.plan);
+      setCurrentCredits(user.extraCredits ?? 0);
+      setCreditsToAdd(0);
+      setCreditReason('Ajuste manual no painel admin');
       setIsActive(user.isActive);
       setIsAdmin(user.isAdmin);
       setEmail(user.email ?? '');
       setPassword('');
       setError(null);
+      setLedgerLoading(true);
+      onLoadLedger(user.username)
+        .then((entries) => setLedgerEntries(entries))
+        .catch(() => setLedgerEntries([]))
+        .finally(() => setLedgerLoading(false));
     }
-  }, [user]);
+  }, [user, onLoadLedger]);
 
   async function handleSave() {
     if (!user) return;
     setLoading(true);
     setError(null);
     try {
-      const updates: Partial<AdminUser & { password: string }> = { plan, isActive, isAdmin, email: email || null };
+      const updates: Partial<AdminUser & { password: string }> = {
+        plan,
+        isActive,
+        isAdmin,
+        email: email || null,
+      };
       if (password) updates.password = password;
       await onSave(user.username, updates);
       onClose();
@@ -199,6 +237,28 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAddCredits() {
+    if (!user) return;
+    const qty = Math.max(0, Math.floor(Number(creditsToAdd) || 0));
+    if (qty <= 0) {
+      setError('Informe uma quantidade de créditos maior que zero.');
+      return;
+    }
+    setCreditsLoading(true);
+    setError(null);
+    try {
+      const result = await onAddCredits(user.username, qty, creditReason);
+      setCurrentCredits(result.balanceAfter);
+      setCreditsToAdd(0);
+      const entries = await onLoadLedger(user.username);
+      setLedgerEntries(entries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao adicionar créditos');
+    } finally {
+      setCreditsLoading(false);
     }
   }
 
@@ -229,6 +289,67 @@ function EditUserDialog({ user, onClose, onSave }: EditUserDialogProps) {
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-700">Nova senha (deixe em branco para manter)</label>
             <Input type="password" placeholder="••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">Saldo atual de créditos</span>
+              <span className="inline-flex items-center rounded-full bg-indigo-600 text-white text-xs font-semibold px-2 py-1">
+                {currentCredits}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">Adicionar créditos</label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  placeholder="0"
+                  value={creditsToAdd}
+                  onChange={(e) => setCreditsToAdd(Math.max(0, Number(e.target.value) || 0))}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-600">Saldo projetado</label>
+                <div className="h-10 rounded-md border border-slate-200 bg-white px-3 flex items-center text-sm font-medium text-slate-700">
+                  {currentCredits + Math.max(0, Math.floor(Number(creditsToAdd) || 0))}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-600">Motivo</label>
+              <Input
+                placeholder="Ex: bônus de suporte"
+                value={creditReason}
+                onChange={(e) => setCreditReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={handleAddCredits} disabled={creditsLoading}>
+                {creditsLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Adicionar créditos
+              </Button>
+            </div>
+            <div className="border-t border-slate-200 pt-2">
+              <div className="text-xs font-semibold text-slate-600 mb-1">Extrato recente</div>
+              {ledgerLoading ? (
+                <div className="text-xs text-slate-500">Carregando extrato...</div>
+              ) : ledgerEntries.length === 0 ? (
+                <div className="text-xs text-slate-500">Nenhum lançamento de crédito ainda.</div>
+              ) : (
+                <div className="max-h-32 overflow-auto space-y-1">
+                  {ledgerEntries.slice(0, 8).map((entry) => (
+                    <div key={entry.id} className="text-xs rounded border border-slate-200 bg-white px-2 py-1 flex items-center justify-between gap-2">
+                      <span className={entry.delta >= 0 ? 'text-emerald-600 font-medium' : 'text-amber-700 font-medium'}>
+                        {entry.delta >= 0 ? `+${entry.delta}` : entry.delta}
+                      </span>
+                      <span className="text-slate-500 truncate flex-1" title={entry.reason ?? ''}>{entry.reason ?? '—'}</span>
+                      <span className="text-slate-400">{new Date(entry.createdAt).toLocaleDateString('pt-BR')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -719,7 +840,10 @@ function StatsTab() {
 const PAGE_SIZE = 20;
 
 function UsersTab() {
+  const authUser = useAuthStore((s) => s.user);
+  const fetchUsage = useUsageStore((s) => s.fetchUsage);
   const [data, setData] = useState<ListUsersResponse | null>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<Record<string, { periodEnd?: string | null; status?: string | null; stripeCustomerId?: string; error?: boolean }>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -734,7 +858,12 @@ function UsersTab() {
     setLoading(true);
     setError(null);
     try {
-      setData(await listAdminUsers({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, search }));
+      const [usersRes, statusRes] = await Promise.all([
+        listAdminUsers({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, search }),
+        getBillingSubscriptionStatus().catch(() => ({ statusByUser: {} })),
+      ]);
+      setData(usersRes);
+      setSubscriptionStatus(statusRes.statusByUser ?? {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar usuários');
     } finally {
@@ -747,7 +876,32 @@ function UsersTab() {
   async function handleSaveUser(username: string, updates: Partial<AdminUser & { password: string }>) {
     await updateAdminUser(username, updates);
     showToast('success', `Usuário ${username} atualizado.`);
+    if (authUser?.username === username) {
+      void fetchUsage();
+    }
     void loadUsers();
+  }
+
+  async function handleAddCredits(username: string, amount: number, reason?: string) {
+    const result = await addAdminUserCredits(username, {
+      amount,
+      reason,
+      requestId: crypto.randomUUID(),
+    });
+    showToast(
+      'success',
+      `Créditos adicionados (${result.balanceBefore} → ${result.balanceAfter}). Lançamento #${result.ledgerEntryId}.`
+    );
+    if (authUser?.username === username) {
+      void fetchUsage();
+    }
+    void loadUsers();
+    return result;
+  }
+
+  async function handleLoadLedger(username: string) {
+    const result = await listAdminUserCreditsLedger(username, { limit: 50, offset: 0 });
+    return result.entries;
   }
 
   async function handleCreateUser(data: { username: string; password: string; plan: string; email: string; isAdmin: boolean }) {
@@ -812,6 +966,9 @@ function UsersTab() {
                   <tr className="border-b border-slate-100 bg-slate-50">
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Usuário</th>
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Plano</th>
+                    <th className="text-left px-4 py-3 font-medium text-slate-600">Pago Stripe</th>
+                    <th className="text-left px-4 py-3 font-medium text-slate-600">Expira em</th>
+                    <th className="text-left px-4 py-3 font-medium text-slate-600">Créditos</th>
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Criado em</th>
                     <th className="text-right px-4 py-3 font-medium text-slate-600">Ações</th>
@@ -819,9 +976,13 @@ function UsersTab() {
                 </thead>
                 <tbody>
                   {data?.users.length === 0 ? (
-                    <tr><td colSpan={5} className="text-center py-12 text-slate-400">Nenhum usuário encontrado.</td></tr>
+                    <tr><td colSpan={8} className="text-center py-12 text-slate-400">Nenhum usuário encontrado.</td></tr>
                   ) : (
-                    data?.users.map((user) => (
+                    data?.users.map((user) => {
+                      const sub = subscriptionStatus[user.username];
+                      const hasStripe = !!(user.stripeCustomerId ?? sub?.stripeCustomerId);
+                      const periodEnd = sub?.periodEnd;
+                      return (
                       <tr key={user.userId} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
@@ -836,6 +997,19 @@ function UsersTab() {
                           </div>
                         </td>
                         <td className="px-4 py-3"><PlanBadge plan={user.plan} /></td>
+                        <td className="px-4 py-3">
+                          {hasStripe
+                            ? <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-medium"><CreditCard className="w-3.5 h-3.5" /> Sim</span>
+                            : <span className="text-slate-400 text-xs">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">
+                          {periodEnd ? new Date(periodEnd + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs px-2 py-0.5 font-medium">
+                            {user.extraCredits ?? 0}
+                          </span>
+                        </td>
                         <td className="px-4 py-3">
                           {user.isActive
                             ? <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-medium"><CheckCircle className="w-3.5 h-3.5" /> Ativo</span>
@@ -861,7 +1035,8 @@ function UsersTab() {
                           </DropdownMenu>
                         </td>
                       </tr>
-                    ))
+                    );
+                    })
                   )}
                 </tbody>
               </table>
@@ -881,7 +1056,13 @@ function UsersTab() {
         </>
       )}
 
-      <EditUserDialog user={editUser} onClose={() => setEditUser(null)} onSave={handleSaveUser} />
+      <EditUserDialog
+        user={editUser}
+        onClose={() => setEditUser(null)}
+        onSave={handleSaveUser}
+        onAddCredits={handleAddCredits}
+        onLoadLedger={handleLoadLedger}
+      />
       <DeleteDialog username={deleteUsername} onClose={() => setDeleteUsername(null)} onConfirm={handleDeleteUser} />
       <CreateUserDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreateUser} />
     </div>
@@ -1076,14 +1257,23 @@ function LLMApiTab() {
 
   useEffect(() => { void loadSettings(); }, [loadSettings]);
 
-  function update(key: string, value: string) {
+  function update(key: string, value: string | boolean) {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }
 
   async function handleSave() {
     setSaving(true);
     try {
-      await updateAdminSettings(settings);
+      const toSend = { ...settings };
+      for (const key of ['openrouter_enabled_models', 'openai_enabled_models', 'gemini_enabled_models']) {
+        const raw = toSend[key];
+        if (typeof raw === 'string') {
+          try {
+            toSend[key] = JSON.parse(raw);
+          } catch { /* keep string */ }
+        }
+      }
+      await updateAdminSettings(toSend);
       showToast('success', 'Configurações salvas com sucesso.');
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Erro ao salvar');
@@ -1093,10 +1283,22 @@ function LLMApiTab() {
   }
 
   const providerTab = PROVIDER_TABS.find((p) => p.id === activeProvider)!;
+  const providerEnabledKey = `provider_enabled_${activeProvider}`;
+  const providerEnabled = (() => {
+    const raw = settings[providerEnabledKey];
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'string') {
+      const v = raw.trim().toLowerCase();
+      if (v === 'false' || v === '0' || v === 'off' || v === 'no') return false;
+      if (v === 'true' || v === '1' || v === 'on' || v === 'yes') return true;
+    }
+    return true;
+  })();
   const enabledModelsKey = `${activeProvider}_enabled_models`;
   const enabledModels: string[] = (() => {
     try {
       const raw = settings[enabledModelsKey];
+      if (Array.isArray(raw)) return raw;
       if (typeof raw === 'string') return JSON.parse(raw);
     } catch { /* ignore */ }
     return [];
@@ -1192,6 +1394,21 @@ function LLMApiTab() {
         ))}
       </div>
 
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <input
+            type="checkbox"
+            checked={providerEnabled}
+            onChange={(e) => update(providerEnabledKey, e.target.checked)}
+            className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+          />
+          <span className="font-medium text-slate-700">Ativar provedor {providerTab.label} no roteamento do servidor</span>
+        </label>
+        <p className="text-xs text-slate-500 mt-1">
+          Quando desativado, o servidor ignora este provedor mesmo que a chave esteja configurada.
+        </p>
+      </div>
+
       {/* Models checkboxes */}
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <h3 className="text-sm font-semibold text-slate-700 mb-1">Modelos habilitados para roteamento ({activeProvider})</h3>
@@ -1203,18 +1420,29 @@ function LLMApiTab() {
             const isEnabled = enabledModels.includes(modelId);
             const result = testResults[modelId];
             return (
-              <label key={modelId} className="flex items-start gap-2 cursor-pointer p-2 rounded-lg border border-slate-100 hover:bg-slate-50">
-                <input type="checkbox" checked={isEnabled} onChange={() => toggleModel(modelId)} className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-900">{meta?.name ?? modelId}</span>
-                    {result === 'ok' && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
-                    {result === 'fail' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-                    {result === 'testing' && <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin" />}
+              <div key={modelId} className="flex items-start gap-2 p-2 rounded-lg border border-slate-100 hover:bg-slate-50">
+                <label className="flex items-start gap-2 cursor-pointer min-w-0 flex-1">
+                  <input type="checkbox" checked={isEnabled} onChange={() => toggleModel(modelId)} className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-slate-900">{meta?.name ?? modelId}</span>
+                      {result === 'ok' && <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+                      {result === 'fail' && <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                      {result === 'testing' && <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin shrink-0" />}
+                    </div>
+                    <span className="text-xs text-slate-400 font-mono">{modelId}</span>
                   </div>
-                  <span className="text-xs text-slate-400 font-mono">{modelId}</span>
-                </div>
-              </label>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => isEnabled && toggleModel(modelId)}
+                  className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0 disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                  title={isEnabled ? 'Remover modelo' : 'Modelo desabilitado'}
+                  disabled={!isEnabled}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -1583,6 +1811,7 @@ function PaymentsTab() {
   const [settings, setSettings] = useState<AdminSettings>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSecrets, setShowSecrets] = useState(false);
   const { toast, showToast } = useToast();
@@ -1635,11 +1864,30 @@ function PaymentsTab() {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Configurações de Pagamento</h2>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                setSyncLoading(true);
+                const r = await syncBillingStripe();
+                showToast('success', `Sincronizado: ${r.synced} de ${r.total} usuários com Stripe atualizados.`);
+              } catch (e) {
+                showToast('error', e instanceof Error ? e.message : 'Erro ao sincronizar');
+              } finally {
+                setSyncLoading(false);
+              }
+            }}
+            disabled={syncLoading}
+          >
+            {syncLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RotateCw className="w-4 h-4 mr-2" />}
+            Sincronizar com Stripe
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowSecrets(!showSecrets)}>
             {showSecrets ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
             {showSecrets ? 'Ocultar chaves' : 'Mostrar chaves'}
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
+          <Button size="sm" onClick={handleSave} disabled={saving || syncLoading}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
             Salvar
           </Button>
@@ -1692,11 +1940,12 @@ function PaymentsTab() {
           <Info className="w-5 h-5 text-indigo-600" />
           <h3 className="text-sm font-semibold text-slate-700">IDs de Preço Stripe</h3>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { key: 'stripe_price_free', label: 'Plano Gratuito', placeholder: 'price_...' },
             { key: 'stripe_price_premium', label: 'Plano Premium', placeholder: 'price_...' },
             { key: 'stripe_price_enterprise', label: 'Plano Enterprise', placeholder: 'price_...' },
+            { key: 'stripe_price_credits_5', label: 'Pacote 5 créditos extras', placeholder: 'price_...' },
           ].map(({ key, label, placeholder }) => (
             <div key={key} className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-slate-700">{label}</label>
@@ -1759,7 +2008,7 @@ function PaymentsTab() {
       </div>
 
       <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving || syncLoading}>
           {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
           Salvar Configurações
         </Button>

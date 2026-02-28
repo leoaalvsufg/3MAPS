@@ -30,6 +30,8 @@ export interface MindElixirNode {
   tags?: string[];
   icons?: string[];
   hyperLink?: string;
+  /** Optional thumbnail URL (e.g., YouTube preview) rendered on the root node. */
+  thumbnailUrl?: string;
   note?: string;
 	  /** Short glossary-style definition for this concept (pt-BR). */
 	  definition?: string;
@@ -38,6 +40,8 @@ export interface MindElixirNode {
 
 export interface MindElixirData {
   nodeData: MindElixirNode;
+  /** Posições customizadas (override do layout) quando o usuário arrasta nós. */
+  nodePositions?: Record<string, { x: number; y: number }>;
   arrows?: Array<{
     id: string;
     label: string;

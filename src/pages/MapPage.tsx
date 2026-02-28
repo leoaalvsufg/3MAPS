@@ -17,7 +17,7 @@ import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { parseJSON } from '@/services/llm/client';
 import { callRoutedLLM } from '@/services/llm/routedClient';
-		import { getNodeByNodeDetailedRefinementPrompt, getPostGenPrompt } from '@/services/llm/prompts';
+		import { getNodeByNodeDetailedRefinementPrompt, getNodeDefinitionPrompt, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 
@@ -40,6 +40,7 @@ export function MapPage() {
   const [showChat, setShowChat] = useState(false);
   const [showExport, setShowExport] = useState(false);
  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [isGeneratingDefinition, setIsGeneratingDefinition] = useState(false);
   const thumbnailGeneratedRef = useRef(false);
 
   // Undo/redo for mindElixirData edits
@@ -119,8 +120,9 @@ export function MapPage() {
     }
   }, [id]); // Only depends on map ID
 
-	const handlePostGenAction = async (action: 'conciso' | 'detalhado' | 'traduzir' | 'regenerar') => {
-    if (!map || !map.analysis || !settings.hasAnyApiKey()) return;
+	const handlePostGenAction = async (action: 'conciso' | 'detalhado' | 'traduzir' | 'regenerar', targetLang?: string) => {
+    if (!map || !settings.hasAnyApiKey()) return;
+		if (action !== 'detalhado' && !map.analysis) return;
 		// Hard guard to avoid duplicate clicks / double-requests while processing.
 		if (postGenInFlightRef.current) return;
 		postGenInFlightRef.current = true;
@@ -138,8 +140,13 @@ export function MapPage() {
 						if (!found) return undefined;
 						return collectSubtreeIds(found.node);
 					})();
+				const centralTheme =
+					map.analysis?.central_theme ??
+					(map.mindElixirData?.nodeData as MindElixirNode | undefined)?.topic ??
+					map.title ??
+					'Tema';
 				const prompt = getNodeByNodeDetailedRefinementPrompt({
-					centralTheme: map.analysis.central_theme,
+					centralTheme,
 					nodes: nodesForRefinement,
 				});
 
@@ -170,7 +177,8 @@ export function MapPage() {
 				return;
 			}
 
-	    const prompt = getPostGenPrompt(action, map.analysis);
+			if (!map.analysis) return;
+	    const prompt = getPostGenPrompt(action, map.analysis, targetLang);
 	    const result = await callRoutedLLM(
 	      'postgen',
 	      [{ role: 'user', content: prompt }],
@@ -359,6 +367,61 @@ export function MapPage() {
     if (showDetails) setShowDetails(false);
   };
 
+  const handleGenerateDefinition = useCallback(
+    async (nodeId: string): Promise<string | null> => {
+      if (!map || !settings.hasAnyApiKey()) return null;
+      const root = map.mindElixirData?.nodeData as MindElixirNode | undefined;
+      if (!root) return null;
+      const stack: Array<{ node: MindElixirNode; path: string }> = [{ node: root, path: root.topic ?? '' }];
+      let pathFromRoot = '';
+      let targetNode: MindElixirNode | null = null;
+      while (stack.length) {
+        const cur = stack.pop();
+        if (!cur) break;
+        if (cur.node.id === nodeId) {
+          targetNode = cur.node;
+          pathFromRoot = cur.path;
+          break;
+        }
+        for (const ch of cur.node.children ?? []) {
+          stack.push({ node: ch, path: `${cur.path} > ${ch.topic ?? ''}` });
+        }
+      }
+      if (!targetNode || !targetNode.topic) return null;
+      setIsGeneratingDefinition(true);
+      try {
+        const prompt = getNodeDefinitionPrompt({
+          topic: targetNode.topic,
+          mapTitle: map.title ?? 'Mapa',
+          pathFromRoot: pathFromRoot || targetNode.topic,
+          centralTheme: map.analysis?.central_theme,
+        });
+        const result = await callRoutedLLM('suggestions', [{ role: 'user', content: prompt }], { maxTokens: 150 });
+        const def = (result ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        if (!def) return null;
+        const setDefinition = (node: MindElixirNode, id: string): MindElixirNode => {
+          if (node.id === id) return { ...node, definition: def };
+          return {
+            ...node,
+            children: (node.children ?? []).map((c) => setDefinition(c, id)),
+          };
+        };
+        const next = {
+          ...map.mindElixirData,
+          nodeData: setDefinition(root, nodeId),
+        };
+        pushUndoState(next);
+        updateMap(map.id, { mindElixirData: normalizeMindElixirData(next) });
+        return def;
+      } catch {
+        return null;
+      } finally {
+        setIsGeneratingDefinition(false);
+      }
+    },
+    [map, settings, pushUndoState, updateMap]
+  );
+
 
 	if (!map && syncState?.status === 'loading') {
     return (
@@ -469,7 +532,7 @@ export function MapPage() {
           <PostGenActions
             onConcise={() => handlePostGenAction('conciso')}
             onDetailed={() => handlePostGenAction('detalhado')}
-            onTranslate={() => handlePostGenAction('traduzir')}
+            onTranslate={(targetLang) => handlePostGenAction('traduzir', targetLang)}
             onRegenerate={() => handlePostGenAction('regenerar')}
             onExport={handleExport}
             onChat={handleChat}
@@ -504,7 +567,13 @@ export function MapPage() {
       {/* Details panel */}
       {showDetails && !showChat && (
         <div className="w-80 shrink-0 hidden lg:flex flex-col overflow-hidden">
-	          <DetailsPanel map={map} selectedNode={selectedNode} detailsEnabled={detailsEnabled} />
+	          <DetailsPanel
+              map={map}
+              selectedNode={selectedNode}
+              detailsEnabled={detailsEnabled}
+              onGenerateDefinition={handleGenerateDefinition}
+              isGeneratingDefinition={isGeneratingDefinition}
+            />
         </div>
       )}
 

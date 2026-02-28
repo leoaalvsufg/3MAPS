@@ -20,6 +20,15 @@ function getServiceAccountPath() {
 }
 
 /**
+ * Check if Firebase Admin can be initialized (credentials available).
+ * @returns {boolean}
+ */
+export function isFirebaseAdminConfigured() {
+  if (_app) return true;
+  return getServiceAccountPath() !== null;
+}
+
+/**
  * Initialize Firebase Admin (idempotent). Call before verifyIdToken.
  * @returns {boolean} true if initialized, false if no credentials
  */
@@ -41,7 +50,7 @@ export function initFirebaseAdmin() {
 /**
  * Verify a Firebase ID token and return decoded claims.
  * @param {string} idToken
- * @returns {Promise<{ uid: string, email?: string, name?: string } | null>}
+ * @returns {Promise<{ uid: string, email?: string, name?: string, picture?: string } | null>}
  */
 export async function verifyFirebaseIdToken(idToken) {
   if (!initFirebaseAdmin()) return null;
@@ -51,6 +60,7 @@ export async function verifyFirebaseIdToken(idToken) {
       uid: decoded.uid,
       email: decoded.email ?? null,
       name: decoded.name ?? decoded.email ?? null,
+      picture: decoded.picture ?? null,
     };
   } catch {
     return null;

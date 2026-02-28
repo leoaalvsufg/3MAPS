@@ -18,7 +18,7 @@ import {
   type OnNodesChange,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Smile, X } from 'lucide-react';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 import type { MindElixirData, MindElixirNode } from '@/types/mindmap';
 
@@ -46,6 +46,7 @@ interface MindMapCanvasProps {
 
 type MindmapActions = {
   updateTopic: (id: string, topic: string) => void;
+  updateIcons: (id: string, icons: string[]) => void;
   addChild: (parentId: string) => void;
   deleteNode: (id: string) => void;
 };
@@ -62,16 +63,36 @@ type MindmapNodeData = {
   label: string;
 	definition?: string;
 	showDefinition?: boolean;
+	icons?: string[];
+	hyperLink?: string;
+	thumbnailUrl?: string;
+	isRoot?: boolean;
 };
 
+const EMOJI_QUICK_PICK = ['📌', '🎯', '✅', '❌', '💡', '⭐', '📝', '🔗', '📎', '📁', '🗂️', '💼', '📊', '🔒', '⚡', '🔥', '💬', '🧩', '🎨', '🌟'];
+
 function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
-  const { updateTopic, addChild, deleteNode } = useMindmapActions();
+  const { updateTopic, updateIcons, addChild, deleteNode } = useMindmapActions();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(data.label);
+  const [showIconPicker, setShowIconPicker] = useState(false);
+  const iconPickerRef = useRef<HTMLDivElement>(null);
+  const icon = (data.icons ?? [])[0] ?? null; // Apenas 1 ícone por nó
 
   useEffect(() => {
     if (!isEditing) setDraft(data.label);
   }, [data.label, isEditing]);
+
+  useEffect(() => {
+    if (!showIconPicker) return;
+    const handleClick = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (iconPickerRef.current?.contains(el)) return;
+      setShowIconPicker(false);
+    };
+    document.addEventListener('click', handleClick, true);
+    return () => document.removeEventListener('click', handleClick, true);
+  }, [showIconPicker]);
 
   const commit = () => {
     const next = draft.trim();
@@ -111,9 +132,42 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
             />
           ) : (
 	            <>
-	              <div className="mindmap-node__label" title={data.label}>
-	                {data.label}
+	              {(data.isRoot && data.thumbnailUrl) ? (
+	                <a
+	                  href={data.hyperLink ?? data.thumbnailUrl}
+	                  target="_blank"
+	                  rel="noreferrer"
+	                  onClick={(e) => e.stopPropagation()}
+	                  className="mb-2 block"
+	                  title="Abrir vídeo no YouTube"
+	                >
+	                  <img
+	                    src={data.thumbnailUrl}
+	                    alt="Thumbnail do vídeo"
+	                    className="h-20 w-36 rounded-md border border-border object-cover"
+	                  />
+	                </a>
+	              ) : null}
+	              <div className="flex items-center gap-1.5 flex-wrap">
+	                {icon && (
+	                  <span className="shrink-0 text-base leading-none" aria-hidden>{icon}</span>
+	                )}
+	                <div className="mindmap-node__label min-w-0" title={data.label}>
+	                  {data.label}
+	                </div>
 	              </div>
+								{(data.isRoot && data.hyperLink) ? (
+									<a
+										href={data.hyperLink}
+										target="_blank"
+										rel="noreferrer"
+										onClick={(e) => e.stopPropagation()}
+										className="mt-1 block text-xs text-primary underline underline-offset-2 break-all"
+										title="Abrir vídeo no YouTube"
+									>
+										{data.hyperLink}
+									</a>
+								) : null}
 							{(id !== 'root' && data.definition && data.showDefinition) ? (
 							<div className="mindmap-node__definition" title={data.definition}>
 								{data.definition}
@@ -125,6 +179,67 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
 
         {selected && (
           <div className="mindmap-node__actions flex items-center gap-1 shrink-0">
+            <div className="relative flex items-center gap-0.5">
+              <button
+                className={`mindmap-node__action flex items-center justify-center min-w-[28px] ${icon ? 'text-lg' : ''}`}
+                title={icon ? 'Alterar ou remover ícone' : 'Adicionar ícone'}
+                onClick={() => setShowIconPicker((v) => !v)}
+                aria-label={icon ? 'Alterar ícone' : 'Adicionar ícone'}
+                aria-expanded={showIconPicker}
+              >
+                {icon ?? <Smile className="h-4 w-4" />}
+              </button>
+              {icon && (
+                <button
+                  className="mindmap-node__action p-0.5 hover:bg-destructive/20 hover:text-destructive rounded"
+                  title="Remover ícone"
+                  onClick={() => {
+                    updateIcons(id, []);
+                    setShowIconPicker(false);
+                  }}
+                  aria-label="Remover ícone"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {showIconPicker && (
+                <div
+                  ref={iconPickerRef}
+                  className="absolute top-full left-0 mt-1.5 z-50 p-3 rounded-xl border border-border bg-popover shadow-xl min-w-[220px]"
+                  role="listbox"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="grid grid-cols-5 gap-2 w-full">
+                    {EMOJI_QUICK_PICK.map((emoji, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={`min-w-[36px] min-h-[36px] w-9 h-9 flex items-center justify-center text-xl rounded-lg transition-colors shrink-0 ${
+                          icon === emoji ? 'bg-primary/20 ring-2 ring-primary/40' : 'hover:bg-muted/80 active:scale-95'
+                        }`}
+                        onClick={() => {
+                          updateIcons(id, [emoji]);
+                          setShowIconPicker(false);
+                        }}
+                        title={emoji}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="w-full mt-3 py-2 text-xs font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                    onClick={() => {
+                      updateIcons(id, []);
+                      setShowIconPicker(false);
+                    }}
+                  >
+                    Remover ícone
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               className="mindmap-node__action"
               title="Adicionar filho"
@@ -199,7 +314,7 @@ function nextChildTopic(parent: MindElixirNode): string {
 
 function buildLayout(
   root: MindElixirNode,
-  opts?: { showAllDetails?: boolean; selectedId?: string | null }
+  opts?: { showAllDetails?: boolean; selectedId?: string | null; nodePositions?: Record<string, { x: number; y: number }> }
 ): { nodes: Node<MindmapNodeData>[]; edges: Edge[] } {
   const X_SPACING = 280;
   const Y_SPACING = 84;
@@ -209,6 +324,7 @@ function buildLayout(
 
   const showAll = opts?.showAllDetails ?? true;
   const selId = opts?.selectedId ?? null;
+  const nodePositions = opts?.nodePositions ?? {};
 
   const safeRoot = deepCloneNode(root);
   const heights = new Map<string, number>();
@@ -239,11 +355,20 @@ function buildLayout(
   const edges: Edge[] = [];
 
   const addNode = (n: MindElixirNode, x: number, y: number) => {
+    const pos = nodePositions[n.id] ?? { x, y };
     nodes.push({
       id: n.id,
       type: 'mindmapNode',
-      position: { x, y },
-		      data: { label: n.topic, definition: n.definition || undefined },
+      position: pos,
+      draggable: n.id !== 'root',
+      data: {
+        label: n.topic,
+        definition: n.definition || undefined,
+        icons: n.icons ?? [],
+        hyperLink: n.hyperLink || undefined,
+        thumbnailUrl: n.thumbnailUrl || undefined,
+        isRoot: n.id === 'root',
+      },
     });
   };
 
@@ -320,7 +445,11 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
 	const showAllDetails = detailsEnabled ?? true;
 
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
-    return buildLayout(safeData.nodeData, { showAllDetails, selectedId });
+    return buildLayout(safeData.nodeData, {
+      showAllDetails,
+      selectedId,
+      nodePositions: safeData.nodePositions,
+    });
   }, [safeData, showAllDetails, selectedId]);
   const nodes = useMemo(() => {
 		return layoutNodes.map((n) => {
@@ -354,8 +483,22 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
       const next = applyNodeChanges(changes, nodes);
       const selected = next.find((n) => n.selected);
       setSelectedId(selected?.id ?? null);
+
+      const positionChanges = changes.filter(
+        (c): c is { type: 'position'; id: string } =>
+          c.type === 'position' && 'id' in c && c.id !== 'root'
+      );
+      if (positionChanges.length > 0 && onChange) {
+        const nextPositions = { ...(safeData.nodePositions ?? {}) };
+        for (const n of next) {
+          if (n.id !== 'root' && positionChanges.some((pc) => pc.id === n.id)) {
+            nextPositions[n.id] = n.position;
+          }
+        }
+        onChange(normalizeMindElixirData({ ...safeData, nodePositions: nextPositions }));
+      }
     },
-    [nodes]
+    [nodes, onChange, safeData]
   );
 
   const actions = useMemo<MindmapActions>(() => {
@@ -363,6 +506,12 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
       updateTopic: (id, topic) => {
         const root = safeData.nodeData;
         const [nextRoot, changed] = updateNodeById(root, id, (n) => ({ ...n, topic }));
+        if (!changed) return;
+        onChange?.(normalizeMindElixirData({ ...safeData, nodeData: nextRoot }));
+      },
+      updateIcons: (id, icons) => {
+        const root = safeData.nodeData;
+        const [nextRoot, changed] = updateNodeById(root, id, (n) => ({ ...n, icons }));
         if (!changed) return;
         onChange?.(normalizeMindElixirData({ ...safeData, nodeData: nextRoot }));
       },
@@ -446,7 +595,7 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
           onNodesChange={onNodesChange}
 					onPaneClick={() => setSelectedId(null)}
           onInit={setInstance}
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           elementsSelectable
           fitView

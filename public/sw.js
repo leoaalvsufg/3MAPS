@@ -5,7 +5,7 @@
  * - App shell cached on install
  */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = `3maps-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [

@@ -1,0 +1,43 @@
+# Exemplo de configuração nginx para 3Maps
+# Copie para /etc/nginx/sites-available/3maps e adapte
+# Depois: sudo ln -s /etc/nginx/sites-available/3maps /etc/nginx/sites-enabled/
+#         sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    server_name 63.141.232.205 _;  # substitua pelo seu dominio
+
+    root /home/usuario/3maps/dist;
+    index index.html;
+
+    # API e arquivos estáticos do servidor Node
+    location /api/ {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+    }
+
+    # SSE (streaming LLM)
+    location /api/llm/ {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 300s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

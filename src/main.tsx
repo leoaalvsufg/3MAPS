@@ -3,12 +3,29 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { performStorageCleanup } from '@/lib/storageCleanup';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const rootEl = document.getElementById('root');
+if (!rootEl) throw new Error('Root element not found');
+
+try {
+  createRoot(rootEl).render(
+    <StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+} catch (err) {
+  rootEl.innerHTML = `
+    <div style="padding:24px;font-family:system-ui,sans-serif;max-width:600px;margin:40px auto">
+      <h1 style="color:#b91c1c">Erro ao iniciar</h1>
+      <pre style="background:#fef2f2;padding:16px;border-radius:8px;overflow:auto;font-size:13px">${String(err instanceof Error ? err.message : err)}</pre>
+      <button onclick="location.reload()" style="margin-top:16px;padding:8px 16px;cursor:pointer">Recarregar</button>
+    </div>
+  `;
+  console.error(err);
+}
 
 // On startup: verify stored token and load maps from server if authenticated.
 setTimeout(async () => {

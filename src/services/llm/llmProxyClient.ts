@@ -4,6 +4,7 @@
  */
 
 import type { LLMProvider } from '@/types/settings';
+import type { MultimodalPart } from './client';
 
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -41,14 +42,22 @@ export async function fetchLlmStatus(): Promise<{ configured: boolean }> {
   return { configured: data.configured === true };
 }
 
+export interface LlmOptionsResponse {
+  options: Array<{ provider: LLMProvider; model: string }>;
+  providerModels?: Record<LLMProvider, string[]>;
+}
+
 /**
  * Retorna as opções de provedor/modelo disponíveis no servidor.
  */
-export async function fetchLlmOptions(): Promise<Array<{ provider: LLMProvider; model: string }>> {
+export async function fetchLlmOptions(): Promise<LlmOptionsResponse> {
   const res = await fetch('/api/llm/options');
-  if (!res.ok) return [];
+  if (!res.ok) return { options: [] };
   const data = await res.json();
-  return Array.isArray(data.options) ? data.options : [];
+  return {
+    options: Array.isArray(data.options) ? data.options : [],
+    providerModels: data.providerModels ?? undefined,
+  };
 }
 
 /**
@@ -150,4 +159,33 @@ export async function callServerLlmStream(
   }
 
   return fullContent;
+}
+
+/** Chama o proxy multimodal do servidor (texto + imagem/YouTube). */
+export async function callServerLlmMultimodal(
+  parts: MultimodalPart[],
+  options: { model: string; temperature?: number; maxTokens?: number }
+): Promise<string> {
+  const token = getAuthToken();
+  if (!token) throw new Error('Login obrigatório para gerar mapas.');
+
+  const res = await fetch('/api/llm/multimodal', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      model: options.model,
+      parts,
+      temperature: options.temperature ?? 0.3,
+      maxTokens: options.maxTokens ?? 4096,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error ?? `Erro do servidor ${res.status}`);
+  }
+  return data.content ?? '';
 }

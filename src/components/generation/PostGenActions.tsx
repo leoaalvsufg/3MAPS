@@ -1,8 +1,10 @@
 import { Minimize2, Maximize2, Languages, RefreshCw, Download, MessageSquare, Layers, BookOpen } from 'lucide-react';
+import { TRANSLATE_TARGET_LANGUAGES } from '@/services/llm/prompts';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -18,7 +20,7 @@ type PostGenAction = 'conciso' | 'detalhado' | 'traduzir' | 'regenerar';
 interface PostGenActionsProps {
   onConcise: () => void;
   onDetailed: () => void;
-  onTranslate: () => void;
+  onTranslate: (targetLang: string) => void;
   onRegenerate: () => void;
   onExport: () => void;
   onChat: () => void;
@@ -131,17 +133,29 @@ export function PostGenActions({
 				{isDetailedProcessing ? 'Detalhando…' : 'Detalhado'}
       </Button>
 
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onTranslate}
-        disabled={isLoading}
-        className="gap-1.5 text-xs h-8"
-        title="Traduzir para inglês"
-      >
-        <Languages className="h-3.5 w-3.5" />
-        Traduzir
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+            className="gap-1.5 text-xs h-8"
+            title="Traduzir para outro idioma"
+          >
+            <Languages className="h-3.5 w-3.5" />
+            Traduzir
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuLabel>Traduzir para</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {TRANSLATE_TARGET_LANGUAGES.map((lang) => (
+            <DropdownMenuItem key={lang.id} onClick={() => onTranslate(lang.id)}>
+              {lang.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <Button
         variant="outline"

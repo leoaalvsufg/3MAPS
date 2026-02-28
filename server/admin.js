@@ -19,7 +19,8 @@
  *   PUT  /api/admin/settings           — update admin settings
  */
 
-import { listUsers, getUser, updateUser, deleteUser, createUser } from './users.js';
+import crypto from 'node:crypto';
+import { listUsers, getUser, updateUser, deleteUser, createUser, addExtraCredits, listCreditLedger } from './users.js';
 import { getUsage, resetMonthlyUsage, getGlobalStats } from './usage.js';
 import { getDataDir, listMaps } from './storage.js';
 import {
@@ -119,12 +120,66 @@ export async function handleGetUser(username) {
 }
 
 /**
+ * POST /api/admin/users/:username/credits/add
+ * Add credits with audit ledger and idempotency.
+ */
+export async function handleAddUserCredits(username, body, adminUsername) {
+  const profile = await getUser(username);
+  if (!profile) return null;
+
+  const amount = Number(body?.amount ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('amount deve ser um número positivo');
+  }
+  const reason = typeof body?.reason === 'string' && body.reason.trim()
+    ? body.reason.trim().slice(0, 240)
+    : 'Ajuste manual via painel admin';
+  const requestId = typeof body?.requestId === 'string' && body.requestId.trim()
+    ? body.requestId.trim()
+    : crypto.randomUUID();
+
+  const result = addExtraCredits(username, amount, {
+    reason,
+    createdBy: adminUsername ?? null,
+    requestId,
+  });
+
+  return {
+    ok: true,
+    username,
+    requestId,
+    added: result.added,
+    balanceBefore: result.before,
+    balanceAfter: result.after,
+    ledgerEntryId: result.ledgerEntryId,
+    idempotent: result.idempotent === true,
+  };
+}
+
+/**
+ * GET /api/admin/users/:username/credits/ledger
+ * List credit ledger entries.
+ */
+export async function handleGetUserCreditsLedger(username, url) {
+  const profile = await getUser(username);
+  if (!profile) return null;
+  const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') ?? '50', 10)));
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10));
+  const ledger = listCreditLedger(username, { limit, offset });
+  return {
+    username,
+    currentBalance: profile.extraCredits ?? 0,
+    ...ledger,
+  };
+}
+
+/**
  * PATCH /api/admin/users/:username
  * Update user fields.
- * Allowed fields: plan, isActive, isAdmin, email, password
+ * Allowed fields: plan, isActive, isAdmin, email, password, extraCredits
  */
 export async function handleUpdateUser(username, body) {
-  const allowed = ['plan', 'isActive', 'isAdmin', 'email', 'password'];
+  const allowed = ['plan', 'isActive', 'isAdmin', 'email', 'password', 'extraCredits'];
   const updates = {};
 
   for (const key of allowed) {
@@ -411,6 +466,12 @@ export async function handleUpdateSettings(body, adminUsername) {
     'openrouter_api_key',
     'openai_api_key',
     'gemini_api_key',
+    'provider_enabled_openrouter',
+    'provider_enabled_openai',
+    'provider_enabled_gemini',
+    'openrouter_enabled_models',
+    'openai_enabled_models',
+    'gemini_enabled_models',
     'replicate_api_key',
     'llm_default_provider',
     'llm_default_model',
@@ -420,6 +481,7 @@ export async function handleUpdateSettings(body, adminUsername) {
     'stripe_price_free',
     'stripe_price_premium',
     'stripe_price_enterprise',
+    'stripe_price_credits_5',
     'plan_free_name',
     'plan_free_description',
     'plan_free_price',
@@ -439,9 +501,27 @@ export async function handleUpdateSettings(body, adminUsername) {
   ];
 
   const filtered = {};
+  const maskedSecretMarkers = ['****'];
+  const secretKeys = new Set([
+    'openrouter_api_key',
+    'openai_api_key',
+    'gemini_api_key',
+    'replicate_api_key',
+    'stripe_secret_key',
+    'stripe_webhook_secret',
+    'smtp_pass',
+  ]);
   for (const key of allowedKeys) {
     if (key in body) {
-      filtered[key] = body[key];
+      const value = body[key];
+      if (
+        secretKeys.has(key) &&
+        typeof value === 'string' &&
+        maskedSecretMarkers.some((marker) => value.includes(marker))
+      ) {
+        continue; // keep existing secret when client sends masked value
+      }
+      filtered[key] = value;
     }
   }
 

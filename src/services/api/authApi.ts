@@ -3,6 +3,9 @@ export interface AuthUser {
   username: string;
   isAdmin?: boolean;
   plan?: string;
+  extraCredits?: number;
+  /** URL da foto do usuário (login social Google/Firebase) */
+  photoURL?: string | null;
 }
 
 export interface AuthResponse {

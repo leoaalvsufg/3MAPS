@@ -14,6 +14,7 @@ const AuthPage = lazy(() => import('@/pages/AuthPage').then((m) => ({ default: m
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((m) => ({ default: m.AdminPage })));
 const ReleaseNotesPage = lazy(() => import('@/pages/ReleaseNotesPage').then((m) => ({ default: m.ReleaseNotesPage })));
 const BillingSuccessPage = lazy(() => import('@/pages/BillingSuccessPage').then((m) => ({ default: m.BillingSuccessPage })));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 
 function PageLoader() {
   return (
@@ -117,6 +118,14 @@ function App() {
             element={
               <Suspense fallback={<PageLoader />}>
                 <ReleaseNotesPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ProfilePage />
               </Suspense>
             }
           />

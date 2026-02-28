@@ -43,6 +43,10 @@ export default defineConfig({
         target: 'http://localhost:8787',
         changeOrigin: true,
       },
+      '/api/billing': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
       '/api/users': {
         target: 'http://localhost:8787',
         changeOrigin: true,

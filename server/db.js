@@ -56,6 +56,8 @@ export function getDb() {
 
   // Run migrations
   runMigrations(_db);
+  // Safety net: old/custom DBs may have higher schema_version but still miss expected columns.
+  ensureUsersCompatibilityColumns(_db);
 
   return _db;
 }
@@ -264,6 +266,49 @@ const MIGRATIONS = [
       }
     },
   },
+  // Migration 0009 — foto do usuário (login social Google/Firebase)
+  {
+    version: 9,
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN photo_url TEXT`);
+      } catch (e) {
+        if (!String(e?.message || e).includes('duplicate column')) throw e;
+      }
+    },
+  },
+  // Migration 0010 — créditos extras para funcionalidades avançadas
+  {
+    version: 10,
+    up: (db) => {
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN extra_credits INTEGER NOT NULL DEFAULT 0`);
+      } catch (e) {
+        if (!String(e?.message || e).includes('duplicate column')) throw e;
+      }
+    },
+  },
+  // Migration 0011 — extrato de créditos (auditoria + idempotência)
+  {
+    version: 11,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS credit_ledger (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          username        TEXT NOT NULL,
+          delta           INTEGER NOT NULL, -- positivo = adição, negativo = consumo
+          balance_before  INTEGER NOT NULL,
+          balance_after   INTEGER NOT NULL,
+          reason          TEXT,
+          created_by      TEXT,
+          request_id      TEXT UNIQUE,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_credit_ledger_username_created
+          ON credit_ledger(username, created_at DESC);
+      `);
+    },
+  },
 ];
 
 function runMigrations(db) {
@@ -289,6 +334,33 @@ function runMigrations(db) {
       console.log(`[DB] Applied migration v${migration.version}`);
     }
   }
+}
+
+function hasColumn(db, table, column) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  return cols.some((c) => c.name === column);
+}
+
+function ensureUsersCompatibilityColumns(db) {
+  const requiredColumns = [
+    { name: 'firebase_uid', sql: 'ALTER TABLE users ADD COLUMN firebase_uid TEXT' },
+    { name: 'stripe_customer_id', sql: 'ALTER TABLE users ADD COLUMN stripe_customer_id TEXT' },
+    { name: 'photo_url', sql: 'ALTER TABLE users ADD COLUMN photo_url TEXT' },
+    { name: 'extra_credits', sql: 'ALTER TABLE users ADD COLUMN extra_credits INTEGER NOT NULL DEFAULT 0' },
+  ];
+
+  for (const col of requiredColumns) {
+    if (!hasColumn(db, 'users', col.name)) {
+      db.exec(col.sql);
+      // eslint-disable-next-line no-console
+      console.log(`[DB] Added missing column users.${col.name}`);
+    }
+  }
+
+  // Keep Firebase UID index present even in compatibility path.
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid) WHERE firebase_uid IS NOT NULL'
+  );
 }
 
 // ---------------------------------------------------------------------------

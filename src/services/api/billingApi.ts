@@ -41,3 +41,15 @@ export async function createCheckoutSession(
     body: JSON.stringify({ plan }),
   });
 }
+
+/** Inicia checkout para compra de créditos extras (pacote de 5 créditos). */
+export async function createCreditsCheckoutSession(token: string): Promise<CheckoutResponse> {
+  return billingFetch<CheckoutResponse>('/api/billing/checkout', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ type: 'credits', amount: 5 }),
+  });
+}

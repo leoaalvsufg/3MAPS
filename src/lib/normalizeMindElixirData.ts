@@ -46,6 +46,10 @@ export function normalizeMindElixirData(input: MindElixirData | null | undefined
   function normalizeNode(node: MindElixirNode, isRoot = false): MindElixirNode {
     const n: MindElixirNode = { ...node };
 
+    // Preserve icons (array of emoji strings)
+    const rawIcons = (n as unknown as { icons?: unknown }).icons;
+    n.icons = Array.isArray(rawIcons) ? (rawIcons as string[]).filter((x) => typeof x === 'string' && x.length > 0) : undefined;
+
     // topic
     n.topic = toTopic((n as unknown as { topic?: unknown }).topic, isRoot ? 'Mapa Mental' : `Tópico ${counter + 1}`);
 

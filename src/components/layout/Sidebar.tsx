@@ -1,6 +1,7 @@
+import { useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
-  Plus, Map, Settings, ChevronLeft, ChevronRight, X, Tag, LogOut, LogIn, User, Crown, Shield, Clock, type LucideIcon,
+  Plus, Map, ChevronLeft, ChevronRight, X, Tag, LogOut, LogIn, User, Crown, Shield, Clock, type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,11 +40,6 @@ const BASE_NAV_ITEMS: NavItem[] = [
   },
 ];
 
-const SETTINGS_NAV_ITEM: NavItem = {
-  to: '/settings', icon: Settings, label: 'Configurações', exact: false,
-  iconColor: 'text-slate-500', iconBg: 'bg-slate-50', iconBgActive: 'bg-slate-100',
-};
-
 /** 3Maps icon — uses the favicon.svg from public */
 function LogoImage({ size = 36 }: { size?: number }) {
   return (
@@ -63,6 +59,8 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
   const location = useLocation();
   const { isAuthenticated, user, logout } = useAuthStore();
   const planLimits = useUsageStore((s) => s.limits);
+  const extraCredits = useUsageStore((s) => s.extraCredits);
+  const fetchUsage = useUsageStore((s) => s.fetchUsage);
   const planId = planLimits?.id ?? 'free';
   const isPremium = planId === 'premium';
   const isEnterprise = planId === 'enterprise';
@@ -74,11 +72,11 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 5);
 
-  // Admin always has full access; otherwise follow plan limits.
-  const canConfigureApiKeys = isAdmin || planLimits?.canConfigureApiKeys === true;
-  const NAV_ITEMS = canConfigureApiKeys
-    ? [...BASE_NAV_ITEMS, SETTINGS_NAV_ITEM]
-    : BASE_NAV_ITEMS;
+  useEffect(() => {
+    void fetchUsage();
+  }, [fetchUsage]);
+
+  const NAV_ITEMS = BASE_NAV_ITEMS;
 
   function handleLogout() {
     logout();
@@ -237,10 +235,24 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
             )}
 
             {!collapsed && (
-              <div className="flex items-center gap-2 mb-2 min-w-0">
-                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 shrink-0">
-                  <User className="h-3.5 w-3.5 text-indigo-600" />
-                </div>
+              <NavLink
+                to="/profile"
+                onClick={onClose}
+                className="flex items-center gap-2 mb-2 min-w-0 rounded-lg p-1.5 -m-1.5 hover:bg-slate-50 transition-colors"
+                title="Ver perfil"
+              >
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={user.username}
+                    className="w-6 h-6 rounded-full object-cover shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 shrink-0">
+                    <User className="h-3.5 w-3.5 text-indigo-600" />
+                  </div>
+                )}
                 <span className="text-xs font-medium text-slate-600 truncate flex-1 min-w-0">{user.username}</span>
                 {isAdmin ? (
                   <Badge className="text-[10px] px-1.5 py-0 bg-violet-600 hover:bg-violet-600 text-white gap-0.5 shrink-0">
@@ -262,6 +274,11 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
                     Free
                   </Badge>
                 )}
+              </NavLink>
+            )}
+            {!collapsed && (
+              <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-600">
+                Créditos extras: <span className="font-semibold text-slate-800">{extraCredits}</span>
               </div>
             )}
             <Tooltip delayDuration={0}>

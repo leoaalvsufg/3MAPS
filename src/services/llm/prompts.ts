@@ -57,6 +57,57 @@ Retorne APENAS o JSON válido, sem markdown, sem explicações, sem blocos de c�
 }`;
 }
 
+/** Prompt para análise de vídeo YouTube → JSON de análise */
+export function getYouTubeAnalysisPrompt(videoUrl: string, additionalPrompt: string): string {
+  const extra = additionalPrompt.trim();
+  return `Você é um especialista em análise conceptual e criação de mapas mentais.
+
+Assista/analise o vídeo do YouTube abaixo e extraia as principais ideias para um mapa mental.
+${extra ? `\nINSTRUÇÕES ADICIONAIS DO USUÁRIO:\n${extra}\n` : ''}
+
+VÍDEO: ${videoUrl}
+
+Faça uma análise profunda e estruturada. Extraia conceitos, relações e hierarquia.
+Retorne APENAS o JSON válido, sem markdown, sem explicações, sem blocos de código:
+{
+  "central_theme": "string",
+  "subtopics": ["string"],
+  "key_concepts": ["string"],
+  "relationships": [{"from": "string", "to": "string", "type": "string"}],
+  "depth_level": 3,
+  "suggested_node_count": 25,
+  "suggested_tags": ["string"],
+  "template_context": "padrao"
+}`;
+}
+
+/** Prompt para análise de imagem → JSON de análise */
+export function getImageAnalysisPrompt(additionalPrompt: string): string {
+  const extra = additionalPrompt.trim();
+  return `Você é um especialista em análise conceptual e criação de mapas mentais.
+
+Analise a imagem anexada e extraia as principais ideias para um mapa mental.
+Interprete de forma multimodal:
+- Se houver texto legível (OCR), extraia e organize os pontos principais.
+- Se houver diagrama/representação visual (ex.: pirâmides, fluxos, organogramas), descreva a estrutura e o significado de cada parte.
+- Se houver mistura de texto e elementos visuais, combine ambos em uma análise única e coerente.
+- Evite inventar conteúdo que não aparece na imagem; sinalize incerteza quando necessário.
+${extra ? `\nINSTRUÇÕES ADICIONAIS DO USUÁRIO:\n${extra}\n` : ''}
+
+Faça uma análise profunda e estruturada. Extraia conceitos, relações e hierarquia visíveis na imagem.
+Retorne APENAS o JSON válido, sem markdown, sem explicações, sem blocos de código:
+{
+  "central_theme": "string",
+  "subtopics": ["string"],
+  "key_concepts": ["string"],
+  "relationships": [{"from": "string", "to": "string", "type": "string"}],
+  "depth_level": 3,
+  "suggested_node_count": 25,
+  "suggested_tags": ["string"],
+  "template_context": "padrao"
+}`;
+}
+
 export function getMindMapPrompt(analysis: AnalysisResult): string {
   return `Você é um especialista em mapas mentais hierárquicos e estruturação conceptual.
 ${EVALUATE_QUESTION_INSTRUCTION}
@@ -134,6 +185,65 @@ Formatação (obrigatório):
 Conteúdo: informativo, preciso, mínimo ~800 palavras. Sem filler nem frases decorativas.`;
 }
 
+/**
+ * Prompt mestre para modo aprofundado: gera guia técnico completo com estrutura fixa.
+ */
+export function getDeepGuideArticlePrompt(topic: string, additionalContext?: string): string {
+  const cleanTopic = topic.trim() || 'Tema técnico';
+  const extra = (additionalContext ?? '').trim();
+
+  return `Contexto e Persona:
+Atue como um Engenheiro de Software Sênior e Tech Lead especializado na criação de arquiteturas de ponta. Sua tarefa é escrever um relatório técnico ou "Guia Completo" sobre ${cleanTopic}.
+
+Tom e Estilo:
+O tom deve ser técnico, pragmático, direto e voltado para desenvolvedores e arquitetos de software.
+Evite jargões vazios; prefira explicar a engenharia por trás da tecnologia.
+Formate a saída em Markdown com hierarquia clara de títulos, bullet points e textos em negrito para destacar termos técnicos.
+
+Estrutura Obrigatória do Documento:
+
+1. Título e Resumo Executivo:
+Crie um título profissional.
+Explique o que é a tecnologia de forma pragmática e descreva os principais problemas de engenharia ou de negócio que ela resolve.
+
+2. Fundamentos e Analogia Didática:
+Explique o funcionamento central da tecnologia utilizando uma analogia simples e de fácil compreensão do mundo real.
+
+3. Arquitetura e Fluxo de Dados:
+Detalhe os estágios críticos do pipeline ou da arquitetura da tecnologia.
+Crie um fluxo lógico de 4 a 5 etapas sequenciais, explicando rapidamente o que ocorre em cada fase.
+Crie uma estrutura em texto que simule um mapa mental ou um diagrama de blocos.
+
+4. Desenvolvimento Prático (Implementação Hands-on):
+Apresente um guia prático de implementação usando a stack tecnológica padrão de mercado atual para essa área.
+Liste as ferramentas sugeridas e mencione alternativas open-source.
+Estruture um passo a passo conceitual de como o código ou o fluxo de desenvolvimento seria montado em um ambiente como Python.
+
+5. Minúcias e Otimização para Produção (Tópicos Avançados):
+Esta é a seção mais importante.
+Vá além do código básico e explique as técnicas avançadas necessárias para levar essa tecnologia de uma Prova de Conceito (PoC) para um ambiente de produção escalável e seguro.
+Discuta gargalos comuns e estratégias modernas de otimização.
+Cite 3 ou 4 conceitos avançados específicos da área.
+
+6. Referências Bibliográficas:
+Forneça uma lista de 10 a 15 referências técnicas no formato de links de documentações oficiais, artigos acadêmicos (ex: arXiv), publicações de grandes empresas de tecnologia e tutoriais relevantes.
+
+${extra ? `Contexto adicional disponível (use para melhorar precisão):\n${extra}\n` : ''}
+
+Regras de saída (obrigatórias):
+- Retorne APENAS Markdown (sem JSON, sem blocos de código com instruções meta).
+- Use cabeçalhos no formato:
+  - # Título profissional
+  - ## 1. Título e Resumo Executivo
+  - ## 2. Fundamentos e Analogia Didática
+  - ## 3. Arquitetura e Fluxo de Dados
+  - ## 4. Desenvolvimento Prático (Implementação Hands-on)
+  - ## 5. Minúcias e Otimização para Produção (Tópicos Avançados)
+  - ## 6. Referências Bibliográficas
+- Na seção 6, inclua 10 a 15 referências com links HTTP/HTTPS válidos.
+- Idioma: português brasileiro.`;
+}
+
 export function getChatSystemPrompt(
   title: string,
   analysis: AnalysisResult,
@@ -162,14 +272,27 @@ Retorne APENAS um array JSON válido, sem markdown:
 ["pergunta 1", "pergunta 2", "pergunta 3"]`;
 }
 
+export const TRANSLATE_TARGET_LANGUAGES: Array<{ id: string; name: string }> = [
+  { id: 'en', name: 'Inglês' },
+  { id: 'es', name: 'Espanhol' },
+  { id: 'fr', name: 'Francês' },
+  { id: 'de', name: 'Alemão' },
+  { id: 'it', name: 'Italiano' },
+  { id: 'pt', name: 'Português' },
+  { id: 'ja', name: 'Japonês' },
+  { id: 'zh', name: 'Chinês' },
+];
+
 export function getPostGenPrompt(
   action: 'conciso' | 'detalhado' | 'traduzir' | 'regenerar',
-  analysis: AnalysisResult
+  analysis: AnalysisResult,
+  targetLang?: string
 ): string {
+  const langName = (targetLang && TRANSLATE_TARGET_LANGUAGES.find((l) => l.id === targetLang)?.name) ?? 'inglês';
   const actionInstructions = {
     conciso: `Recrie o mapa de forma CONCISA: no máximo 15 nós, apenas conceitos essenciais. Texto direto, sem redundância.`,
     detalhado: `Recrie o mapa com MAIS PROFUNDIDADE: mínimo 30 nós, expandir subtópicos com subconceitos e exemplos relevantes. Estruturado e direto.`,
-    traduzir: `Recrie o mapa TRADUZINDO todos os textos para inglês. Mesma estrutura e hierarquia; rótulos claros.`,
+    traduzir: `Recrie o mapa TRADUZINDO todos os textos para ${langName}. Mesma estrutura e hierarquia; rótulos claros.`,
     regenerar: `Recrie o mapa com PERSPECTIVA DIFERENTE: nova organização e ângulos alternativos. Mantenha rigor conceptual.`,
   };
 
@@ -285,5 +408,34 @@ Retorne APENAS JSON válido:
     }
   ]
 }`;
+}
+
+/**
+ * Prompt para gerar definição/explicação de um termo no contexto do mapa.
+ * Usado quando o usuário clica em um nó sem definição.
+ */
+export function getNodeDefinitionPrompt(params: {
+  topic: string;
+  mapTitle: string;
+  pathFromRoot: string;
+  centralTheme?: string;
+}): string {
+  const { topic, mapTitle, pathFromRoot, centralTheme } = params;
+  const themeCtx = centralTheme ? `\nTEMA CENTRAL DO MAPA: ${centralTheme}` : '';
+  return `Você é um especialista em glossários e explicações conceituais.
+
+TAREFA: Escreva uma definição ou explicação curta (1–3 frases, máx 240 caracteres) do termo abaixo, no contexto do mapa mental em que ele aparece.
+
+TERMO: ${topic}
+MAPA: ${mapTitle}
+CONTEXTO NO MAPA (caminho hierárquico): ${pathFromRoot}
+${themeCtx}
+
+Regras:
+- Direto, sem redundância, em português.
+- Explique o que é e como se relaciona ao tema do mapa.
+- Máximo 240 caracteres.
+
+Retorne APENAS o texto da definição, sem aspas, sem prefixos como "Definição:" ou "Explicação:".`;
 }
 
