@@ -33,9 +33,10 @@ import {
   handleGetUserCreditsLedger,
 } from './admin.js';
 import { logActivity, checkAndNotify, getAdminSetting } from './activity.js';
-import { hasAnyLlmKey, getLlmOptionsWithModels, proxyLlmComplete, proxyLlmStream, proxyLlmMultimodal, proxyReplicateImage, getLlmCredits } from './llmProxy.js';
+import { hasAnyLlmKey, getLlmOptionsWithModels, proxyLlmComplete, proxyLlmStream, proxyLlmMultimodal, proxyReplicateImage, proxyVideoUploadAndAnalyze, getLlmCredits } from './llmProxy.js';
 import { getDb } from './db.js';
 import { getOpenApiSpec } from './openapi.js';
+import Busboy from 'busboy';
 
 // ---------------------------------------------------------------------------
 // Error recovery: uncaught exceptions / unhandled rejections
@@ -1696,6 +1697,79 @@ const server = http.createServer(async (req, res) => {
           maxTokens: maxTokens ?? 4096,
         });
         return await sendJson(res, 200, { content }, corsHeaders ?? {});
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});
+      }
+    }
+
+    const VIDEO_UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // 100MB
+    const VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+
+    if (url.pathname === '/api/llm/upload-video' && req.method === 'POST') {
+      const authUser = await getAuthUser(req);
+      if (authUser.username === 'local') {
+        return await sendJson(res, 401, { error: 'Login obrigatório' }, corsHeaders ?? {});
+      }
+      if (!hasAnyLlmKey()) {
+        return await sendJson(res, 503, {
+          error: 'Configure as chaves de API no painel administrativo antes de usar a geração de mapas.',
+        }, corsHeaders ?? {});
+      }
+      const contentType = req.headers['content-type'] ?? '';
+      if (!contentType.includes('multipart/form-data')) {
+        return await sendJson(res, 400, { error: 'Content-Type deve ser multipart/form-data' }, corsHeaders ?? {});
+      }
+      try {
+        const { fileBuffer, mimeType, prompt } = await new Promise((resolve, reject) => {
+          const chunks = [];
+          let totalBytes = 0;
+          let resolvedMime = '';
+          let resolvedPrompt = '';
+          const bb = Busboy({ headers: { 'content-type': contentType } });
+          bb.on('file', (fieldname, file, info) => {
+            if (fieldname !== 'video') {
+              file.resume();
+              return;
+            }
+            const { mimeType: mt } = info;
+            if (!VIDEO_MIME_TYPES.includes(mt) && !mt.startsWith('video/')) {
+              file.resume();
+              reject(new Error('Formato de vídeo não suportado. Use MP4, WebM ou MOV.'));
+              return;
+            }
+            resolvedMime = mt;
+            file.on('data', (chunk) => {
+              totalBytes += chunk.length;
+              if (totalBytes > VIDEO_UPLOAD_MAX_BYTES) {
+                file.resume();
+                reject(new Error('Vídeo muito grande. Máximo 100 MB.'));
+                return;
+              }
+              chunks.push(chunk);
+            });
+            file.on('end', () => {});
+            file.on('error', reject);
+          });
+          bb.on('field', (name, value) => {
+            if (name === 'prompt') resolvedPrompt = String(value ?? '').trim();
+          });
+          bb.on('finish', () => {
+            if (chunks.length === 0) {
+              reject(new Error('Nenhum arquivo de vídeo enviado. Use o campo "video".'));
+              return;
+            }
+            resolve({
+              fileBuffer: Buffer.concat(chunks),
+              mimeType: resolvedMime || 'video/mp4',
+              prompt: resolvedPrompt,
+            });
+          });
+          bb.on('error', reject);
+          req.pipe(bb);
+        });
+        const result = await proxyVideoUploadAndAnalyze(fileBuffer, mimeType, prompt);
+        return await sendJson(res, 200, result, corsHeaders ?? {});
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return await sendJson(res, 502, { error: msg }, corsHeaders ?? {});

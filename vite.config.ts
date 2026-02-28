@@ -25,6 +25,8 @@ export default defineConfig({
 		watch: {
 			ignored: ['**/data/**'],
 		},
+		// Desabilita overlay de erros em dev para evitar ResizeObserver loop (aviso benigno ao abrir mapa)
+		hmr: { overlay: false },
     proxy: {
       '/api/replicate': {
         target: 'https://api.replicate.com',

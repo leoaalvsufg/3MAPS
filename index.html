@@ -12,10 +12,17 @@
         }, 100);
       }
       window.addEventListener('error', function(e) {
+        // ResizeObserver loop: aviso benigno do navegador, não quebra a app
+        var msg = (e.error && e.error.message) || e.message || '';
+        if (typeof msg === 'string' && /ResizeObserver/i.test(msg)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return true;
+        }
         window.__APP_ERROR__ = e.error || e.message;
-        var msg = (e.error && e.error.message) || e.message || (e.filename ? 'Falha ao carregar: ' + e.filename : 'Erro desconhecido');
-        showAppError(msg);
-      });
+        var displayMsg = msg || (e.filename ? 'Falha ao carregar: ' + e.filename : 'Erro desconhecido');
+        showAppError(displayMsg);
+      }, true);
       window.addEventListener('unhandledrejection', function(e) {
         window.__APP_ERROR__ = e.reason;
         showAppError(e.reason && (e.reason.message || String(e.reason)) || 'Promise rejeitada');

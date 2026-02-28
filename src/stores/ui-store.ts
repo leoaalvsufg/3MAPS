@@ -15,6 +15,8 @@ interface UIStore {
   // Details panel
   detailsPanelOpen: boolean;
   setDetailsPanelOpen: (open: boolean) => void;
+  detailsPanelWidth: number;
+  setDetailsPanelWidth: (width: number) => void;
 
   // Chat panel
   chatOpen: boolean;
@@ -49,6 +51,8 @@ export const useUIStore = create<UIStore>()(
 
       detailsPanelOpen: true,
       setDetailsPanelOpen: (open) => set({ detailsPanelOpen: open }),
+      detailsPanelWidth: 320,
+      setDetailsPanelWidth: (width) => set({ detailsPanelWidth: Math.min(800, Math.max(240, width)) }),
 
       chatOpen: false,
       setChatOpen: (open) => set({ chatOpen: open }),
@@ -78,6 +82,7 @@ export const useUIStore = create<UIStore>()(
       name: 'mindmap-ui',
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
+        detailsPanelWidth: state.detailsPanelWidth,
         viewMode: state.viewMode,
         sortBy: state.sortBy,
       }),

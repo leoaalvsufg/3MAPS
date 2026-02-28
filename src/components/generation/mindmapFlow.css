@@ -2,6 +2,7 @@
   /* Atmosphere tokens (light) */
   --mm-bg-0: #fefdfb;
   --mm-bg-1: #f5f3ef;
+  --mm-bg-accent: rgba(123, 97, 255, 0.07);
   --mm-node-bg: rgba(254, 253, 251, 0.92);
   --mm-node-border: rgba(52, 46, 80, 0.14);
   --mm-node-border-selected: rgba(123, 97, 255, 0.58);
@@ -16,7 +17,7 @@
   --mm-ring: 0 0 0 4px rgba(123, 97, 255, 0.18);
 
   background:
-    radial-gradient(1200px 700px at 50% 15%, rgba(123, 97, 255, 0.07), transparent 60%),
+    radial-gradient(1200px 700px at 50% 15%, var(--mm-bg-accent), transparent 60%),
     linear-gradient(180deg, var(--mm-bg-0), var(--mm-bg-1));
   position: relative;
   overflow: hidden;
@@ -35,6 +36,7 @@
 .dark .mindmap-flow {
   --mm-bg-0: #121217;
   --mm-bg-1: #1a1a2e;
+  --mm-bg-accent: rgba(176, 162, 255, 0.06);
   --mm-node-bg: rgba(18, 18, 23, 0.78);
   --mm-node-border: rgba(245, 243, 239, 0.12);
   --mm-node-border-selected: rgba(176, 162, 255, 0.52);

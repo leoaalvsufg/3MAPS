@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Tag, Plus, X, FileText, Image as ImageIcon, BookOpen, Code, Pencil, Check, ChevronDown, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
+import remarkGfm from 'remark-gfm';
+import { Tag, Plus, X, FileText, Image as ImageIcon, BookOpen, Code, Pencil, Check, ChevronDown, ChevronRight, Sparkles, Loader2, GraduationCap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,7 +20,7 @@ interface DetailsPanelProps {
 export function DetailsPanel({ map, selectedNode, detailsEnabled, onGenerateDefinition, isGeneratingDefinition }: DetailsPanelProps) {
   const [newTag, setNewTag] = useState('');
 	const [tagsExpanded, setTagsExpanded] = useState(false);
-	const [activeTab, setActiveTab] = useState<'article' | 'image' | 'sources' | 'diagram'>('article');
+	const [activeTab, setActiveTab] = useState<'article' | 'image' | 'sources' | 'theoretical' | 'diagram'>('article');
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(map.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -50,25 +51,8 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled, onGenerateDefi
     }
   };
 
-		const sourcesMarkdown = (() => {
-			const sources = map.sources ?? [];
-			if (sources.length === 0) return '';
-			const lines = sources.map((s) => {
-				const meta = [s.author, s.year, s.type].filter(Boolean).join(' · ');
-				const why = s.why ? ` — ${s.why}` : '';
-				const url = s.url ? ` ([link](${s.url}))` : '';
-				return `- **${s.title}**${meta ? ` (${meta})` : ''}${why}${url}`;
-			});
-			return `\n\n---\n\n## Fontes\n\n${lines.join('\n')}`;
-		})();
-
-		const articleMarkdown = (() => {
-			const article = map.article ?? '';
-			// Avoid duplicating if the LLM already produced a Fontes section.
-			const hasFontes = /(^|\n)#{2,3}\s*fontes\b/i.test(article);
-			if (!sourcesMarkdown || hasFontes) return article;
-			return `${article}${sourcesMarkdown}`;
-		})();
+		// Artigo sem bibliografia: fontes ficam na aba "Fontes".
+		const articleMarkdown = map.article ?? '';
 
   return (
     <div className="flex flex-col h-full bg-card border-l border-border">
@@ -240,7 +224,7 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled, onGenerateDefi
           <FileText className="h-3.5 w-3.5" />
           Artigo
         </button>
-        {map.imageUrl && (
+        {((map.imageUrls?.length ?? 0) > 0 || map.imageUrl) && (
           <button
             onClick={() => setActiveTab('image')}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors ${
@@ -266,6 +250,19 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled, onGenerateDefi
 						Fontes
 					</button>
 				)}
+				{map.referencialTeorico && (
+					<button
+						onClick={() => setActiveTab('theoretical')}
+						className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors ${
+							activeTab === 'theoretical'
+								? 'text-primary border-b-2 border-primary'
+								: 'text-muted-foreground hover:text-foreground'
+						}`}
+					>
+						<GraduationCap className="h-3.5 w-3.5" />
+						Referencial teórico
+					</button>
+				)}
 				{map.mermaid?.code && (
 					<button
 						onClick={() => setActiveTab('diagram')}
@@ -284,19 +281,33 @@ export function DetailsPanel({ map, selectedNode, detailsEnabled, onGenerateDefi
       {/* Content */}
       <ScrollArea className="flex-1">
         {activeTab === 'article' && (
-          <div className="p-4 prose prose-sm max-w-none dark:prose-invert">
-	            <ReactMarkdown>{articleMarkdown}</ReactMarkdown>
+          <div className="p-4 prose prose-sm prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-4 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary prose-a:underline prose-a:underline-offset-2 prose-img:rounded-lg prose-pre:bg-muted/50 prose-pre:border prose-blockquote:border-l-primary prose-blockquote:bg-muted/30 prose-blockquote:py-0.5 prose-blockquote:not-italic prose-strong:font-semibold prose-ul:marker:text-muted-foreground prose-ol:marker:text-muted-foreground">
+	            <ReactMarkdown remarkPlugins={[remarkGfm]}>{articleMarkdown}</ReactMarkdown>
           </div>
         )}
-        {activeTab === 'image' && map.imageUrl && (
-          <div className="p-4">
-            <img
-              src={map.imageUrl}
-              alt={map.title}
-              className="w-full rounded-lg border border-border"
-            />
+        {activeTab === 'image' && ((map.imageUrls?.length ?? 0) > 0 || map.imageUrl) && (
+          <div className="p-4 space-y-6">
+            {(map.imageUrls ?? (map.imageUrl ? [map.imageUrl] : [])).map((url, i) => (
+              <div key={i} className="space-y-1">
+                {(map.imageUrls?.length ?? 0) > 1 && (
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Ilustração {i + 1}
+                  </p>
+                )}
+                <img
+                  src={url}
+                  alt={`${map.title} - ilustração ${i + 1}`}
+                  className="w-full rounded-lg border border-border"
+                />
+              </div>
+            ))}
           </div>
         )}
+				{activeTab === 'theoretical' && map.referencialTeorico && (
+					<div className="p-4 prose prose-sm prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-4 prose-headings:font-semibold prose-a:text-primary prose-a:underline prose-a:underline-offset-2">
+						<ReactMarkdown remarkPlugins={[remarkGfm]}>{map.referencialTeorico}</ReactMarkdown>
+					</div>
+				)}
 				{activeTab === 'sources' && (map.sources?.length ?? 0) > 0 && (
 					<div className="p-4 space-y-3">
 						<div className="text-xs text-muted-foreground">

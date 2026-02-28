@@ -1,4 +1,4 @@
-import { Minimize2, Maximize2, Languages, RefreshCw, Download, MessageSquare, Layers, BookOpen } from 'lucide-react';
+import { Minimize2, Maximize2, Languages, RefreshCw, Download, MessageSquare, Layers, BookOpen, Palette } from 'lucide-react';
 import { TRANSLATE_TARGET_LANGUAGES } from '@/services/llm/prompts';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { GraphType } from '@/types/mindmap';
+import { COLOR_PROFILES, DEFAULT_PROFILE_ID, getColorProfile } from '@/lib/colorProfiles';
 
 import './postGenActions.css';
 
@@ -26,6 +27,8 @@ interface PostGenActionsProps {
   onChat: () => void;
   graphType: GraphType;
   onGraphTypeChange: (type: GraphType) => void;
+  colorProfile?: string;
+  onColorProfileChange?: (id: string) => void;
 	detailsEnabled?: boolean;
 	onDetailsEnabledChange?: (enabled: boolean) => void;
   isLoading?: boolean;
@@ -41,6 +44,8 @@ export function PostGenActions({
   onChat,
   graphType,
   onGraphTypeChange,
+  colorProfile,
+  onColorProfileChange,
 	detailsEnabled,
 	onDetailsEnabledChange,
   isLoading,
@@ -86,6 +91,42 @@ export function PostGenActions({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Formato (perfil de cores) — mindmap only */}
+      {graphType === 'mindmap' && onColorProfileChange && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs h-8"
+              title="Perfil de cores"
+            >
+              <Palette className="h-3.5 w-3.5" />
+              Formato: {getColorProfile(colorProfile).name}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>Perfil de cores</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              value={colorProfile || DEFAULT_PROFILE_ID}
+              onValueChange={onColorProfileChange}
+            >
+              {COLOR_PROFILES.map((p) => (
+                <DropdownMenuRadioItem key={p.id} value={p.id}>
+                  <span
+                    className="inline-block w-3 h-3 rounded-full mr-2 shrink-0"
+                    style={{ backgroundColor: p.preview }}
+                    aria-hidden
+                  />
+                  {p.name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
 				{/* Details toggle (mindmap only) */}
 				{graphType === 'mindmap' && typeof detailsEnabled === 'boolean' && onDetailsEnabledChange && (

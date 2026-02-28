@@ -1,3 +1,17 @@
+// Suprime ResizeObserver loop (aviso benigno do navegador ao redimensionar mapa/canvas)
+if (typeof window !== 'undefined') {
+  const roHandler = (e: ErrorEvent) => {
+    const msg = (e?.message ?? e?.error?.message ?? '') + '';
+    if (/ResizeObserver loop/i.test(msg)) {
+      e.stopImmediatePropagation?.();
+      e.preventDefault?.();
+      return true;
+    }
+    return false;
+  };
+  window.addEventListener('error', roHandler, { capture: true });
+}
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';

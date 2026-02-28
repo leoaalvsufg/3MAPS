@@ -16,7 +16,8 @@ import {
   getQueryRefinementPrompt,
   getMindMapPrompt,
   getArticlePrompt,
-  getDeepGuideArticlePrompt,
+  getDeepArticleWithNodesPrompt,
+  getReferencialTeoricoPrompt,
   getYouTubeAnalysisPrompt,
   getImageAnalysisPrompt,
 } from './prompts';
@@ -63,7 +64,8 @@ export interface GenerationCallbacks {
 
 export type AttachmentInput =
   | { type: 'youtube'; url: string }
-  | { type: 'image'; base64: string; mimeType: string };
+  | { type: 'image'; base64: string; mimeType: string }
+  | { type: 'video'; fileUri: string; mimeType: string; preAnalysis: string };
 export type GenerationMode = 'normal' | 'deep';
 
 export async function generateMindMap(
@@ -188,10 +190,28 @@ export async function generateMindMap(
     if (attachment) {
       if (attachment.type === 'youtube') {
         const prompt = getYouTubeAnalysisPrompt(attachment.url, effectiveQuery);
-        analysisText = await callRoutedMultimodal([{ text: prompt }], {
-          temperature: 0.3,
-          maxTokens: 4096,
-        });
+        analysisText = await callRoutedMultimodal(
+          [
+            { fileData: { fileUri: attachment.url, mimeType: 'video/mp4' } },
+            { text: prompt },
+          ],
+          { temperature: 0.3, maxTokens: 4096 }
+        );
+      } else if (attachment.type === 'video') {
+        extraContext = attachment.preAnalysis;
+        if (!effectiveQuery.trim()) {
+          try {
+            const pa = parseJSON<{ suggested_query?: string }>(attachment.preAnalysis);
+            effectiveQuery = pa.suggested_query ?? effectiveQuery;
+          } catch {
+            /* ignore */
+          }
+        }
+        analysisText = await callRoutedLLM(
+          'analysis',
+          [{ role: 'user', content: getAnalysisPrompt(effectiveQuery, templateId, extraContext) }],
+          { temperature: 0.3, maxTokens: 4096 }
+        );
       } else {
         const prompt = getImageAnalysisPrompt(effectiveQuery);
         analysisText = await callRoutedMultimodal(
@@ -213,27 +233,16 @@ export async function generateMindMap(
     const analysis = parseJSON<AnalysisResult>(analysisText);
     onProgress(30, 'Análise concluída. Gerando mapa mental...');
 
-    // Stage 2 & 3: Mind map + Article (parallel) — cada um pode usar rota própria (custo/benefício)
     mapsStore.setGenerationStatus('generating');
 
-    const articlePrompt = generationMode === 'deep'
-      ? getDeepGuideArticlePrompt(analysis.central_theme, extraContext)
-      : getArticlePrompt(analysis);
+    // Stage 2: Mind map (sempre primeiro; em modo deep precisamos dos nós para o artigo)
+    const mindMapText = await callRoutedLLM(
+      'mindmap',
+      [{ role: 'user', content: getMindMapPrompt(analysis) }],
+      { temperature: 0.4, maxTokens: 8000 }
+    );
 
-    const [mindMapText, articleText] = await Promise.all([
-      callRoutedLLM(
-				'mindmap',
-        [{ role: 'user', content: getMindMapPrompt(analysis) }],
-        { temperature: 0.4, maxTokens: 8000 }
-      ),
-      callRoutedLLM(
-				'article',
-        [{ role: 'user', content: articlePrompt }],
-        { temperature: 0.7, maxTokens: 4000 }
-      ),
-    ]);
-
-    onProgress(70, 'Mapa e artigo gerados. Finalizando...');
+    onProgress(50, generationMode === 'deep' ? 'Mapa gerado. Gerando artigo aprofundado...' : 'Mapa gerado. Gerando artigo...');
 
     let mindElixirData: MindElixirData;
     try {
@@ -243,36 +252,90 @@ export async function generateMindMap(
       throw new Error(`Erro ao interpretar o mapa mental gerado pela IA. Tente novamente. Detalhe: ${parseErr instanceof Error ? parseErr.message : 'JSON inválido'}`);
     }
 
-    // Validate the parsed data has the expected structure
     if (!mindElixirData.nodeData || !mindElixirData.nodeData.topic) {
       console.error('Invalid mind map structure:', JSON.stringify(mindElixirData).slice(0, 500));
       throw new Error('A IA gerou um mapa mental com estrutura inválida. Tente novamente.');
     }
 
-    // normalizeMindElixirData already ensures ids/topic/children and distributes root children.
-    // For YouTube-based generation, enrich the root node with thumbnail + clickable link.
     if (attachment?.type === 'youtube') {
       mindElixirData = attachYouTubeMetadataToRoot(mindElixirData, attachment.url);
     }
 
-    // Stage 4: Image (optional) — chave Replicate no servidor
-    let imageUrl: string | undefined;
-    if (generateImage) {
-      mapsStore.setGenerationStatus('image');
-      onProgress(80, 'Gerando imagem ilustrativa...');
+    // Stage 3: Article (com nós disponíveis para modo deep)
+    const articlePrompt = generationMode === 'deep'
+      ? getDeepArticleWithNodesPrompt({
+          analysis,
+          nodeData: mindElixirData.nodeData,
+          additionalContext: extraContext,
+        })
+      : getArticlePrompt(analysis);
+
+    const articleText = await callRoutedLLM(
+      'article',
+      [{ role: 'user', content: articlePrompt }],
+      { temperature: 0.7, maxTokens: generationMode === 'deep' ? 8000 : 4000 }
+    );
+
+    let referencialTeorico: string | undefined;
+    if (generationMode === 'deep' || templateId === 'pensamento_profundo') {
+      onProgress(65, 'Gerando referencial teórico...');
       try {
-        imageUrl = await generateReplicateImageViaServer(analysis.central_theme);
+        referencialTeorico = await callRoutedLLM(
+          'article',
+          [
+            {
+              role: 'user',
+              content: getReferencialTeoricoPrompt({
+                topic: effectiveQuery,
+                analysis,
+                additionalContext: extraContext,
+              }),
+            },
+          ],
+          { temperature: 0.4, maxTokens: 3000 }
+        );
+        referencialTeorico = referencialTeorico?.trim() || undefined;
       } catch {
-        // Image generation is optional, don't fail
-        console.warn('Image generation failed, continuing without image');
+        referencialTeorico = undefined;
       }
     }
 
-	    const finalArticle = buildFinalArticleMarkdown({
-	      raw: articleText,
-	      title: analysis.central_theme,
-	      coverUrl: generateImage ? imageUrl : undefined,
-	    });
+    onProgress(70, 'Artigo gerado. Finalizando...');
+
+    // Stage 4: Images (optional) — 1 normal, até 5 no modo aprofundado
+    let imageUrl: string | undefined;
+    let imageUrls: string[] | undefined;
+    if (generateImage) {
+      mapsStore.setGenerationStatus('image');
+      const imageCount = generationMode === 'deep' ? 5 : 1;
+      const themes = generationMode === 'deep'
+        ? [
+            analysis.central_theme,
+            ...(analysis.subtopics ?? []).slice(0, 4).map((s) => `${analysis.central_theme} - ${s}`),
+          ].slice(0, 5)
+        : [analysis.central_theme];
+      const urls: string[] = [];
+      for (let i = 0; i < Math.min(imageCount, themes.length); i++) {
+        onProgress(80 + (i / themes.length) * 15, `Gerando imagem ${i + 1}/${themes.length}...`);
+        try {
+          const url = await generateReplicateImageViaServer(themes[i]);
+          if (url) urls.push(url);
+        } catch {
+          console.warn(`Image ${i + 1} generation failed`);
+        }
+      }
+      if (urls.length > 0) {
+        imageUrl = urls[0];
+        imageUrls = urls.length > 1 ? urls : undefined;
+      }
+    }
+
+    const finalArticle = buildFinalArticleMarkdown({
+      raw: articleText,
+      title: analysis.central_theme,
+      coverUrl: imageUrl,
+      extraImageUrls: imageUrls?.slice(1),
+    });
     const deepArticleSources = generationMode === 'deep'
       ? extractSourcesFromArticleMarkdown(finalArticle)
       : [];
@@ -292,8 +355,10 @@ export async function generateMindMap(
       mindElixirData,
 	      article: finalArticle,
       imageUrl,
+      ...(imageUrls && imageUrls.length > 1 ? { imageUrls } : {}),
 			...(mergedSources.length > 0 ? { sources: mergedSources } : {}),
 			mermaid,
+			...(referencialTeorico ? { referencialTeorico } : {}),
       tags: analysis.suggested_tags ?? [],
       createdAt: now,
       updatedAt: now,
@@ -317,7 +382,12 @@ export async function generateMindMap(
   }
 }
 
-function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?: string }): string {
+function buildFinalArticleMarkdown(opts: {
+  raw: string;
+  title: string;
+  coverUrl?: string;
+  extraImageUrls?: string[];
+}): string {
   const title = (opts.title ?? '').trim() || 'Mapa mental';
   let md = (opts.raw ?? '').trim();
 
@@ -325,18 +395,15 @@ function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?
     md = `# ${title}\n\n`;
   }
 
-  // Ensure the article starts with an H1 title.
   if (!md.startsWith('# ')) {
     md = `# ${title}\n\n${md}`;
   }
 
-  // Insert cover image right after the H1 when available.
   const coverUrl = (opts.coverUrl ?? '').trim();
   if (coverUrl && !md.includes(coverUrl)) {
     const lines = md.split(/\r?\n/);
     const h1Index = lines.findIndex((l) => l.startsWith('# '));
     if (h1Index >= 0) {
-      // Insert with surrounding blank lines for stable markdown rendering.
       lines.splice(h1Index + 1, 0, '', `![Capa - ${title}](${coverUrl})`, '');
       md = lines.join('\n');
     } else {
@@ -344,7 +411,23 @@ function buildFinalArticleMarkdown(opts: { raw: string; title: string; coverUrl?
     }
   }
 
-  // Normalize excessive blank lines.
+  const extra = opts.extraImageUrls ?? [];
+  if (extra.length > 0) {
+    const refsMatch = md.match(/(\n##\s*6\.\s*Referências Bibliográficas)/i) ?? md.match(/(\n##\s*Referências)/i);
+    const gallery = extra
+      .filter((u) => u && !md.includes(u))
+      .map((u, i) => `![Ilustração ${i + 2} - ${title}](${u})`)
+      .join('\n\n');
+    if (gallery) {
+      const insert = `\n\n## Ilustrações\n\n${gallery}\n\n`;
+      if (refsMatch) {
+        md = md.replace(refsMatch[1], `${insert}${refsMatch[1]}`);
+      } else {
+        md = `${md}${insert}`;
+      }
+    }
+  }
+
   md = md.replace(/\n{3,}/g, '\n\n').trim();
   return `${md}\n`;
 }

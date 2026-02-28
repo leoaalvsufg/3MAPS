@@ -397,6 +397,150 @@ export async function getLlmCredits() {
 }
 
 /**
+ * Prompt para pré-análise de vídeo (usado no servidor; espelha getVideoPreAnalysisPrompt do frontend).
+ */
+function getVideoPreAnalysisPromptText(userPrompt) {
+  const extra = (userPrompt ?? '').trim();
+  return `Você é um especialista em análise de conteúdo de vídeo.
+
+TAREFA: Analise o vídeo e extraia:
+1) Tema central do vídeo
+2) Tópicos e subtópicos apresentados (em ordem)
+3) Argumentos e evidências utilizados
+4) Conclusões ou pontos-chave
+5) Contexto (quem apresenta, estilo, público-alvo)
+
+${extra ? `INSTRUÇÕES DO USUÁRIO:\n${extra}\n` : ''}
+
+Retorne APENAS JSON válido:
+{
+  "central_theme": "string",
+  "topics": [{ "title": "string", "arguments": ["string"], "timestamp_hint": "string" }],
+  "key_points": ["string"],
+  "context": "string",
+  "suggested_query": "string"
+}`;
+}
+
+/**
+ * Upload de vídeo para Gemini File API + pré-análise.
+ * 1) Upload para Gemini File API (POST files.upload)
+ * 2) Polling até file.state === 'ACTIVE'
+ * 3) Chamada generateContent com fileData + prompt de pré-análise
+ * 4) Retorna { fileUri, mimeType, preAnalysis }
+ * @param {Buffer} fileBuffer - conteúdo binário do vídeo
+ * @param {string} mimeType - ex: video/mp4, video/webm
+ * @param {string} [userPrompt] - prompt opcional do usuário
+ * @returns {Promise<{ fileUri: string; mimeType: string; preAnalysis: string }>}
+ */
+export async function proxyVideoUploadAndAnalyze(fileBuffer, mimeType, userPrompt = '') {
+  const apiKey = getKey('gemini');
+  if (!apiKey) {
+    throw new Error('Chave da API Gemini não configurada. Configure no painel administrativo.');
+  }
+
+  const displayName = `video-${Date.now()}.${mimeType.includes('webm') ? 'webm' : 'mp4'}`;
+  const boundary = `----FormBoundary${Date.now()}${Math.random().toString(36).slice(2)}`;
+  const metadata = JSON.stringify({
+    file: { display_name: displayName },
+  });
+
+  const bodyParts = [
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
+    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
+    fileBuffer,
+    `\r\n--${boundary}--\r\n`,
+  ];
+
+  const preamble = Buffer.from(bodyParts[0] + bodyParts[1], 'utf8');
+  const suffix = Buffer.from(bodyParts[3], 'utf8');
+  const body = Buffer.concat([preamble, bodyParts[2], suffix]);
+
+  const uploadUrl = `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=multipart&key=${encodeURIComponent(apiKey)}`;
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+      'Content-Length': String(body.length),
+    },
+    body,
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    throw new Error(`Gemini File API upload error ${uploadRes.status}: ${errText}`);
+  }
+
+  const uploadData = await uploadRes.json();
+  const fileName = uploadData.name;
+  if (!fileName) {
+    throw new Error('Resposta da Gemini File API sem nome do arquivo');
+  }
+
+  // Polling até state === 'ACTIVE'
+  const filesUrl = `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${encodeURIComponent(apiKey)}`;
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const pollRes = await fetch(filesUrl);
+    if (!pollRes.ok) {
+      const errText = await pollRes.text();
+      throw new Error(`Gemini File API poll error ${pollRes.status}: ${errText}`);
+    }
+    const pollData = await pollRes.json();
+    const state = pollData.state;
+    if (state === 'ACTIVE') {
+      const fileUri = `https://generativelanguage.googleapis.com/v1beta/${fileName}`;
+      const prompt = getVideoPreAnalysisPromptText(userPrompt);
+
+      const genUrl = `${GEMINI_BASE}/models/${GEMINI_MULTIMODAL_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const genBody = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { fileData: { fileUri, mimeType: pollData.mimeType || mimeType } },
+              { text: prompt },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 4096,
+        },
+      };
+
+      const genRes = await fetch(genUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(genBody),
+      });
+
+      if (!genRes.ok) {
+        const errText = await genRes.text();
+        throw new Error(`Gemini generateContent error ${genRes.status}: ${errText}`);
+      }
+
+      const genData = await genRes.json();
+      const preAnalysis = genData.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (preAnalysis == null) {
+        throw new Error('Resposta vazia da API Gemini na análise do vídeo');
+      }
+
+      return {
+        fileUri,
+        mimeType: pollData.mimeType || mimeType,
+        preAnalysis: String(preAnalysis).trim(),
+      };
+    }
+    if (state === 'FAILED') {
+      throw new Error('Processamento do vídeo falhou na Gemini');
+    }
+  }
+
+  throw new Error('Timeout aguardando processamento do vídeo na Gemini');
+}
+
+/**
  * Gera imagem via Replicate. Retorna a URL da imagem.
  */
 export async function proxyReplicateImage(theme) {

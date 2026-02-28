@@ -49,6 +49,9 @@ export function normalizeMindElixirData(input: MindElixirData | null | undefined
     // Preserve icons (array of emoji strings)
     const rawIcons = (n as unknown as { icons?: unknown }).icons;
     n.icons = Array.isArray(rawIcons) ? (rawIcons as string[]).filter((x) => typeof x === 'string' && x.length > 0) : undefined;
+    // Preserve suggestedIcons (from LLM definition generation)
+    const rawSuggested = (n as unknown as { suggestedIcons?: unknown }).suggestedIcons;
+    n.suggestedIcons = Array.isArray(rawSuggested) ? (rawSuggested as string[]).filter((x) => typeof x === 'string' && x.length > 0) : undefined;
 
     // topic
     n.topic = toTopic((n as unknown as { topic?: unknown }).topic, isRoot ? 'Mapa Mental' : `Tópico ${counter + 1}`);

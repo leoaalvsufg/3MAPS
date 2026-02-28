@@ -5,8 +5,8 @@
  */
 declare const __APP_VERSION__: string;
 
-export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.15';
-export const RELEASE_ID = 15;
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.16';
+export const RELEASE_ID = 16;
 
 export interface ReleaseNote {
   version: string;
@@ -16,6 +16,18 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: '0.1.16',
+    date: '2026-02-28',
+    title: 'Release 16 — Fase 2: Vídeo, Markdown e perfis',
+    items: [
+      'YouTube: análise real do vídeo via fileData (Gemini assiste o vídeo)',
+      'Artigo: formatação Markdown rica com remark-gfm',
+      'Badge Vídeo removido — YouTube detectado automaticamente',
+      'Perfis de cores no mapa (Formato no menu de ações)',
+      'Painel lateral redimensionável pelo usuário',
+    ],
+  },
   {
     version: '0.1.15',
     date: '2026-02-28',

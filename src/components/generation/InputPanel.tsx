@@ -170,6 +170,7 @@ export function InputPanel() {
     const trimmed = query.trim();
     let attachment: AttachmentInput | undefined;
     let effectiveQuery = trimmed;
+
     if (imageModeEnabled && imageAttachment) {
       attachment = { type: 'image', base64: imageAttachment.base64, mimeType: imageAttachment.mimeType };
       effectiveQuery = trimmed || 'Extraia as principais ideias desta imagem para um mapa mental.';
@@ -284,7 +285,7 @@ export function InputPanel() {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
-      {/* Attachments: YouTube badge ou imagem */}
+      {/* Attachments: YouTube ou imagem */}
       {(youtubeUrl || imageAttachment) && (
         <div className="flex flex-wrap items-center gap-3">
           {youtubeUrl && (

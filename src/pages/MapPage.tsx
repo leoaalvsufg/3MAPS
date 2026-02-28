@@ -15,9 +15,10 @@ const ExportDialog = lazy(() =>
 );
 import { useMapsStore } from '@/stores/maps-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useUIStore } from '@/stores/ui-store';
 import { parseJSON } from '@/services/llm/client';
 import { callRoutedLLM } from '@/services/llm/routedClient';
-		import { getNodeByNodeDetailedRefinementPrompt, getNodeDefinitionPrompt, getPostGenPrompt } from '@/services/llm/prompts';
+		import { getNodeByNodeDetailedRefinementPrompt, getNodeDefinitionPrompt, NODE_ICON_EMOJIS, getPostGenPrompt } from '@/services/llm/prompts';
 		import type { DeepThoughtSource, GraphType, MindElixirData, MindElixirNode } from '@/types/mindmap';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
 
@@ -38,6 +39,10 @@ export function MapPage() {
  >(null);
   const [showDetails, setShowDetails] = useState(true);
   const [showChat, setShowChat] = useState(false);
+  const detailsPanelWidth = useUIStore((s) => s.detailsPanelWidth);
+  const setDetailsPanelWidth = useUIStore((s) => s.setDetailsPanelWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartRef = useRef<{ x: number; w: number } | null>(null);
   const [showExport, setShowExport] = useState(false);
  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isGeneratingDefinition, setIsGeneratingDefinition] = useState(false);
@@ -83,6 +88,27 @@ export function MapPage() {
 		if (!id) return;
 		void loadMapFromServer(id);
 	}, [id, loadMapFromServer, username]);
+
+	// Resize do painel lateral
+	useEffect(() => {
+		if (!isResizing) return;
+		const onMove = (e: MouseEvent) => {
+			const start = resizeStartRef.current;
+			if (!start) return;
+			const delta = e.clientX - start.x;
+			setDetailsPanelWidth(start.w - delta);
+		};
+		const onUp = () => {
+			setIsResizing(false);
+			resizeStartRef.current = null;
+		};
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+		return () => {
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+		};
+	}, [isResizing, setDetailsPanelWidth]);
 
   // Stable callback — used for export/thumbnail
   const handleReady = useCallback((element: HTMLElement) => {
@@ -396,11 +422,54 @@ export function MapPage() {
           pathFromRoot: pathFromRoot || targetNode.topic,
           centralTheme: map.analysis?.central_theme,
         });
-        const result = await callRoutedLLM('suggestions', [{ role: 'user', content: prompt }], { maxTokens: 150 });
-        const def = (result ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        const result = await callRoutedLLM('suggestions', [{ role: 'user', content: prompt }], { maxTokens: 300 });
+        let raw = (result ?? '').trim();
+        // Remove markdown code blocks (```json ... ``` ou ``` ... ```)
+        const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+        let def = '';
+        let suggestedIcons: string[] = [];
+        try {
+          const parsed = JSON.parse(raw) as { definition?: string; icon?: string; icons?: string[] };
+          def = (parsed.definition ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+          const iconsArr = Array.isArray(parsed.icons) ? parsed.icons : (parsed.icon ? [parsed.icon] : []);
+          suggestedIcons = iconsArr
+            .filter((e): e is string => typeof e === 'string')
+            .map((e) => (e ?? '').trim())
+            .filter((e) => e.length > 0 && e.length <= 8)
+            .slice(0, 5);
+          const validIcons = suggestedIcons.filter((e) => NODE_ICON_EMOJIS.includes(e));
+          if (validIcons.length > 0) suggestedIcons = validIcons;
+          else if (suggestedIcons.length > 0) suggestedIcons = suggestedIcons.slice(0, 3);
+        } catch {
+          const defMatch = raw.match(/"definition"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          def = defMatch ? defMatch[1].replace(/\\"/g, '"').replace(/\s+/g, ' ').trim().slice(0, 240) : '';
+          if (!def && !raw.startsWith('{')) def = raw.replace(/\s+/g, ' ').trim().slice(0, 240);
+          const iconsMatch = raw.match(/"icons"\s*:\s*\[([^\]]*)\]/);
+          if (iconsMatch) {
+            const emojiMatches = iconsMatch[1].match(/"([^"]+)"/g);
+            if (emojiMatches) {
+              suggestedIcons = emojiMatches
+                .map((m) => m.slice(1, -1).trim())
+                .filter((e) => e.length > 0 && e.length <= 8)
+                .slice(0, 5)
+                .filter((e) => NODE_ICON_EMOJIS.includes(e));
+              if (suggestedIcons.length === 0) {
+                suggestedIcons = emojiMatches.map((m) => m.slice(1, -1).trim()).filter((e) => e.length > 0 && e.length <= 8).slice(0, 3);
+              }
+            }
+          }
+        }
         if (!def) return null;
         const setDefinition = (node: MindElixirNode, id: string): MindElixirNode => {
-          if (node.id === id) return { ...node, definition: def };
+          if (node.id === id) {
+            const updates: Partial<MindElixirNode> = { definition: def };
+            if (suggestedIcons.length > 0) {
+              updates.icons = [suggestedIcons[0]];
+              updates.suggestedIcons = suggestedIcons;
+            }
+            return { ...node, ...updates };
+          }
           return {
             ...node,
             children: (node.children ?? []).map((c) => setDefinition(c, id)),
@@ -473,7 +542,7 @@ export function MapPage() {
 	const selectedNode = findNodeById(map.mindElixirData?.nodeData as MindElixirNode | undefined, selectedNodeId);
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className={`flex h-full overflow-hidden ${isResizing ? 'select-none' : ''}`}>
       {/* Main area */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Top bar */}
@@ -538,6 +607,8 @@ export function MapPage() {
             onChat={handleChat}
 				graphType={graphType}
 				onGraphTypeChange={handleGraphTypeChange}
+				colorProfile={map.colorProfile}
+				onColorProfileChange={(id) => updateMap(map.id, { colorProfile: id })}
 					detailsEnabled={detailsEnabled}
 					onDetailsEnabledChange={(enabled) => updateMap(map.id, { detailsEnabled: enabled })}
             isLoading={isLoading}
@@ -557,6 +628,7 @@ export function MapPage() {
 							}}
 							onSelectionChange={setSelectedNodeId}
 							detailsEnabled={detailsEnabled}
+							colorProfile={map.colorProfile}
 						/>
 				) : (
 					<GraphCanvas graphType={graphType} data={map.mindElixirData} />
@@ -564,10 +636,21 @@ export function MapPage() {
 	      </div>
       </div>
 
-      {/* Details panel */}
+      {/* Details panel — largura ajustável pelo usuário (padrão 320px) */}
       {showDetails && !showChat && (
-        <div className="w-80 shrink-0 hidden lg:flex flex-col overflow-hidden">
-	          <DetailsPanel
+        <div className="hidden lg:flex flex-col overflow-hidden shrink-0 relative" style={{ width: detailsPanelWidth }}>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            className="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 z-10 transition-colors"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsResizing(true);
+              resizeStartRef.current = { x: e.clientX, w: detailsPanelWidth };
+            }}
+            title="Arrastar para redimensionar"
+          />
+          <DetailsPanel
               map={map}
               selectedNode={selectedNode}
               detailsEnabled={detailsEnabled}
@@ -577,9 +660,9 @@ export function MapPage() {
         </div>
       )}
 
-      {/* Chat panel */}
+      {/* Chat panel — mesma largura do painel de detalhes */}
       {showChat && (
-        <div className="w-80 shrink-0 hidden lg:flex flex-col overflow-hidden">
+        <div className="shrink-0 hidden lg:flex flex-col overflow-hidden" style={{ width: detailsPanelWidth }}>
           <ChatPanel map={map} onClose={() => setShowChat(false)} />
         </div>
       )}

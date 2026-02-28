@@ -1,4 +1,4 @@
-import type { AnalysisResult } from '@/types/mindmap';
+import type { AnalysisResult, MindElixirNode } from '@/types/mindmap';
 import type { TemplateId } from '@/types/templates';
 import { TEMPLATES } from '@/lib/constants';
 
@@ -78,6 +78,30 @@ Retorne APENAS o JSON válido, sem markdown, sem explicações, sem blocos de c�
   "suggested_node_count": 25,
   "suggested_tags": ["string"],
   "template_context": "padrao"
+}`;
+}
+
+/** Prompt para pré-análise de vídeo (upload) → JSON com tópicos, argumentos, contexto. Usado no servidor. */
+export function getVideoPreAnalysisPrompt(userPrompt?: string): string {
+  const extra = (userPrompt ?? '').trim();
+  return `Você é um especialista em análise de conteúdo de vídeo.
+
+TAREFA: Analise o vídeo e extraia:
+1) Tema central do vídeo
+2) Tópicos e subtópicos apresentados (em ordem)
+3) Argumentos e evidências utilizados
+4) Conclusões ou pontos-chave
+5) Contexto (quem apresenta, estilo, público-alvo)
+
+${extra ? `INSTRUÇÕES DO USUÁRIO:\n${extra}\n` : ''}
+
+Retorne APENAS JSON válido:
+{
+  "central_theme": "string",
+  "topics": [{ "title": "string", "arguments": ["string"], "timestamp_hint": "string" }],
+  "key_points": ["string"],
+  "context": "string",
+  "suggested_query": "string"
 }`;
 }
 
@@ -163,85 +187,133 @@ Regras:
 }
 
 export function getArticlePrompt(analysis: AnalysisResult): string {
-  return `Você é um autor de conteúdo técnico e didático.
-${EVALUATE_QUESTION_INSTRUCTION}
+  return `Você é um redator que escreve artigos completos em prosa, como um blog de qualidade.
 
-Com base na análise abaixo, escreva um artigo em português brasileiro: direto, estruturado, sem redundância e sem tom jornalístico.
-Evite frases de efeito, introduções longas e conclusões genéricas. Priorize clareza e densidade de informação.
+TAREFA: Escreva o artigo completo em Markdown, baseado na análise do mapa abaixo. O artigo deve ser texto corrido, didático e envolvente.
 
-ANÁLISE: ${JSON.stringify(analysis, null, 2)}
+ANÁLISE DO MAPA: ${JSON.stringify(analysis, null, 2)}
 
-Formatação (obrigatório):
-1) Retorne APENAS Markdown. Sem blocos de código, sem JSON, sem texto meta.
-2) Estrutura:
-   - H1: # ${analysis.central_theme}
-   - Introdução objetiva (1–2 parágrafos curtos; vá direto ao ponto)
-   - Uma seção ## por subtópico; ### por conceito-chave quando fizer sentido
-   - Listas em bullets onde ajudar (mínimo 1 por seção principal)
-   - Resumo final em bullets (síntese, não repetição)
-3) Marcadores opcionais (✅ ⚠️ 📌 🔹) de forma consistente.
-4) NÃO inclua imagens nem URLs de imagem.
+REGRAS:
+- Escreva em prosa corrida, com parágrafos bem desenvolvidos
+- Não use bullets, emojis ou notações de planejamento (📌, 🔹, 💡), a menos que tenha uma curiosidade (💡) ou dica (📌)
+- Cada seção deve ter pelo menos 3 parágrafos
+- Use transições naturais entre as seções
+- Tom: didático, mas envolvente, como um artigo de blog de qualidade
 
-Conteúdo: informativo, preciso, mínimo ~800 palavras. Sem filler nem frases decorativas.`;
+FORMATAÇÃO MARKDOWN (obrigatório — use apenas esta sintaxe):
+- Títulos: # para H1, ## para H2, ### para H3 (um espaço após o #)
+- Ênfase: **negrito** e *itálico*
+- Links: [texto](url)
+- Citações: > no início da linha
+- Não use tags HTML nem códigos de escape
+- Linha em branco entre parágrafos e seções
+
+ESTRUTURA:
+- H1: # ${analysis.central_theme}
+- Para CADA subtópico e conceito-chave da análise, crie uma seção ## ou ### com texto em prosa
+- Resumo final em prosa
+- NÃO inclua seção de Referências/Bibliografia — as fontes ficam na aba dedicada
+
+Retorne APENAS Markdown puro, sem blocos de código ou wrappers. Idioma: português brasileiro.`;
 }
 
 /**
- * Prompt mestre para modo aprofundado: gera guia técnico completo com estrutura fixa.
+ * Coleta todos os nós do mapa em formato plano (tópico + caminho hierárquico).
+ */
+function collectNodesForArticle(root: MindElixirNode, path: string[] = []): Array<{ topic: string; path: string; depth: number }> {
+  const out: Array<{ topic: string; path: string; depth: number }> = [];
+  const topic = (root.topic ?? '').trim();
+  if (topic && root.id !== 'root') {
+    out.push({ topic, path: path.join(' › '), depth: path.length });
+  }
+  const nextPath = topic ? [...path, topic] : path;
+  for (const ch of root.children ?? []) {
+    out.push(...collectNodesForArticle(ch, nextPath));
+  }
+  return out;
+}
+
+/**
+ * Prompt mestre para modo aprofundado: gera guia técnico completo.
+ * Usado quando NÃO temos o mapa ainda (geração paralela).
  */
 export function getDeepGuideArticlePrompt(topic: string, additionalContext?: string): string {
   const cleanTopic = topic.trim() || 'Tema técnico';
   const extra = (additionalContext ?? '').trim();
 
-  return `Contexto e Persona:
-Atue como um Engenheiro de Software Sênior e Tech Lead especializado na criação de arquiteturas de ponta. Sua tarefa é escrever um relatório técnico ou "Guia Completo" sobre ${cleanTopic}.
+  return `Você é um redator que escreve artigos completos em prosa, como um blog técnico de qualidade.
 
-Tom e Estilo:
-O tom deve ser técnico, pragmático, direto e voltado para desenvolvedores e arquitetos de software.
-Evite jargões vazios; prefira explicar a engenharia por trás da tecnologia.
-Formate a saída em Markdown com hierarquia clara de títulos, bullet points e textos em negrito para destacar termos técnicos.
+TAREFA: Escreva o artigo completo em Markdown sobre o tema ${cleanTopic}. O artigo deve ser texto corrido, didático e envolvente.
 
-Estrutura Obrigatória do Documento:
+REGRAS:
+- Escreva em prosa corrida, com parágrafos bem desenvolvidos
+- Não use bullets, emojis ou notações de planejamento (📌, 🔹, 💡), a menos que tenha uma curiosidade (💡) ou dica (📌)
+- Cada seção deve ter pelo menos 3 parágrafos
+- Use transições naturais entre as seções
+- Tom: didático, mas envolvente, como um artigo de blog de qualidade
 
-1. Título e Resumo Executivo:
-Crie um título profissional.
-Explique o que é a tecnologia de forma pragmática e descreva os principais problemas de engenharia ou de negócio que ela resolve.
+FORMATAÇÃO MARKDOWN (obrigatório): # H1, ## H2, ### H3 | **negrito** *itálico* | [link](url) | > citação | sem HTML nem escape.
 
-2. Fundamentos e Analogia Didática:
-Explique o funcionamento central da tecnologia utilizando uma analogia simples e de fácil compreensão do mundo real.
+ESTRUTURA:
+- Use Markdown: ## para seções principais, ### para subseções (tópicos)
+1. Título (H1) e Resumo Executivo — em prosa
+2. Fundamentos e Analogia Didática — em prosa
+3. Arquitetura e Fluxo de Dados — em prosa (indique onde diagramas seriam úteis, no texto)
+4. Desenvolvimento Prático — em prosa
+5. Minúcias e Otimização — em prosa
+- NÃO inclua seção de Referências/Bibliografia — as fontes ficam na aba dedicada
 
-3. Arquitetura e Fluxo de Dados:
-Detalhe os estágios críticos do pipeline ou da arquitetura da tecnologia.
-Crie um fluxo lógico de 4 a 5 etapas sequenciais, explicando rapidamente o que ocorre em cada fase.
-Crie uma estrutura em texto que simule um mapa mental ou um diagrama de blocos.
+${extra ? `Contexto adicional:\n${extra}\n` : ''}
 
-4. Desenvolvimento Prático (Implementação Hands-on):
-Apresente um guia prático de implementação usando a stack tecnológica padrão de mercado atual para essa área.
-Liste as ferramentas sugeridas e mencione alternativas open-source.
-Estruture um passo a passo conceitual de como o código ou o fluxo de desenvolvimento seria montado em um ambiente como Python.
+Retorne APENAS Markdown puro. Idioma: português brasileiro.`;
+}
 
-5. Minúcias e Otimização para Produção (Tópicos Avançados):
-Esta é a seção mais importante.
-Vá além do código básico e explique as técnicas avançadas necessárias para levar essa tecnologia de uma Prova de Conceito (PoC) para um ambiente de produção escalável e seguro.
-Discuta gargalos comuns e estratégias modernas de otimização.
-Cite 3 ou 4 conceitos avançados específicos da área.
+/**
+ * Prompt para modo aprofundado COM o mapa gerado: considera TODOS os nós.
+ * Revisa e amplia o texto de forma didática, como professor 30+ anos.
+ */
+export function getDeepArticleWithNodesPrompt(params: {
+  analysis: AnalysisResult;
+  nodeData: MindElixirNode;
+  additionalContext?: string;
+}): string {
+  const { analysis, nodeData, additionalContext } = params;
+  const nodes = collectNodesForArticle(nodeData);
+  const nodesText = nodes
+    .map((n) => `- "${n.topic}" (caminho: ${n.path})`)
+    .join('\n');
+  const extra = (additionalContext ?? '').trim();
 
-6. Referências Bibliográficas:
-Forneça uma lista de 10 a 15 referências técnicas no formato de links de documentações oficiais, artigos acadêmicos (ex: arXiv), publicações de grandes empresas de tecnologia e tutoriais relevantes.
+  return `PERSONA: Você é um redator que escreve artigos completos em prosa, como um blog didático de qualidade.
 
-${extra ? `Contexto adicional disponível (use para melhorar precisão):\n${extra}\n` : ''}
+TAREFA: Escreva o artigo completo em Markdown, baseado em TODOS os nós do mapa abaixo. O artigo deve ser texto corrido, didático e envolvente.
 
-Regras de saída (obrigatórias):
-- Retorne APENAS Markdown (sem JSON, sem blocos de código com instruções meta).
-- Use cabeçalhos no formato:
-  - # Título profissional
-  - ## 1. Título e Resumo Executivo
-  - ## 2. Fundamentos e Analogia Didática
-  - ## 3. Arquitetura e Fluxo de Dados
-  - ## 4. Desenvolvimento Prático (Implementação Hands-on)
-  - ## 5. Minúcias e Otimização para Produção (Tópicos Avançados)
-  - ## 6. Referências Bibliográficas
-- Na seção 6, inclua 10 a 15 referências com links HTTP/HTTPS válidos.
-- Idioma: português brasileiro.`;
+REGRAS:
+- Escreva em prosa corrida, com parágrafos bem desenvolvidos
+- Não use bullets, emojis ou notações de planejamento (📌, 🔹, 💡), a menos que tenha uma curiosidade (💡) ou dica (📌)
+- Cada seção deve ter pelo menos 3 parágrafos
+- Use transições naturais entre as seções
+- Tom: didático, mas envolvente, como um artigo de blog de qualidade
+
+FORMATAÇÃO MARKDOWN (obrigatório): # H1, ## H2, ### H3 | **negrito** *itálico* | [link](url) | > citação | sem HTML nem escape.
+
+ESTRUTURA:
+- Use Markdown para tópicos: # título, ## seções, ### subseções
+- H1: # ${analysis.central_theme}
+- Para CADA nó do mapa, crie uma seção ## ou ### com texto em prosa que desenvolva o tópico
+- Resumo final em prosa
+- NÃO inclua seção de Referências/Bibliografia — as fontes ficam na aba dedicada
+
+TEMA CENTRAL: ${analysis.central_theme}
+SUBTÓPICOS: ${analysis.subtopics.join(', ')}
+CONCEITOS-CHAVE: ${analysis.key_concepts.join(', ')}
+
+TODOS OS NÓS DO MAPA (desenvolva cada um em prosa):
+${nodesText}
+
+${extra ? `Contexto adicional:\n${extra}\n` : ''}
+
+Retorne APENAS Markdown. Idioma: português brasileiro. O artigo deve ser específico deste mapa, não genérico.`;
 }
 
 export function getChatSystemPrompt(
@@ -323,6 +395,37 @@ Retorne APENAS o JSON válido, sem markdown, sem blocos de código, sem explica�
 }
 
 Regras: "id" único (formato "node_N"), "topic" curto (máx 60 caracteres), raiz id "root", hierarquia lógica.`;
+}
+
+/**
+ * Gera o referencial teórico: teorias principais, autores e teorias conectadas.
+ * Usado quando template é pensamento_profundo ou modo aprofundado.
+ */
+export function getReferencialTeoricoPrompt(params: {
+  topic: string;
+  analysis: AnalysisResult;
+  additionalContext?: string;
+}): string {
+  const { topic, analysis, additionalContext } = params;
+  const extra = (additionalContext ?? '').trim();
+  return `Você é um especialista em epistemologia e metodologia científica.
+
+TAREFA: Crie um referencial teórico em Markdown para o tema abaixo. Apresente:
+1) Teorias principais relevantes ao tema, com seus autores (nome do autor, ano quando aplicável)
+2) Teorias conectadas ou relacionadas que complementam ou dialogam com as principais
+3) Breve contextualização de como cada teoria se aplica ao tema
+
+TEMA: ${topic}
+ANÁLISE DO MAPA: central_theme="${analysis.central_theme}", subtopics=[${analysis.subtopics.join(', ')}], key_concepts=[${analysis.key_concepts.join(', ')}]
+
+${extra ? `CONTEXTO ADICIONAL:\n${extra}\n` : ''}
+
+Formato:
+- Use ## para cada teoria principal
+- Liste autor(es) e ano quando relevante
+- Indique teorias conectadas com subitens ou parágrafo curto
+- Português brasileiro
+- Retorne APENAS Markdown, sem JSON, sem blocos de código`;
 }
 
 export function getDeepThoughtPreflightPrompt(topic: string): string {
@@ -410,9 +513,16 @@ Retorne APENAS JSON válido:
 }`;
 }
 
+/** Emojis disponíveis para o LLM sugerir como ícone do nó (tema/conceito). */
+export const NODE_ICON_EMOJIS = [
+  '📌', '🎯', '✅', '❌', '💡', '⭐', '📝', '🔗', '📎', '📁', '🗂️', '💼', '📊', '🔒', '⚡', '🔥', '💬', '🧩', '🎨', '🌟',
+  '🌐', '🔬', '📐', '💻', '🖥️', '📱', '🧬', '⚛️', '🔋', '🔧', '🛠️', '📦', '📚', '🎓', '🏆', '💰', '💎', '🌱', '🌳', '🚀',
+  '🏛️', '⚖️', '📜', '🔮', '🔭', '🧪', '📈', '🎭', '🏗️', '🔑', '🛡️', '⚙️', '🧠', '💡', '🎪', '🌍', '🔄', '📋', '🗃️',
+];
+
 /**
- * Prompt para gerar definição/explicação de um termo no contexto do mapa.
- * Usado quando o usuário clica em um nó sem definição.
+ * Prompt para gerar definição/explicação de um termo no contexto do mapa,
+ * e sugerir um ícone (emoji) que represente o tema.
  */
 export function getNodeDefinitionPrompt(params: {
   topic: string;
@@ -422,20 +532,25 @@ export function getNodeDefinitionPrompt(params: {
 }): string {
   const { topic, mapTitle, pathFromRoot, centralTheme } = params;
   const themeCtx = centralTheme ? `\nTEMA CENTRAL DO MAPA: ${centralTheme}` : '';
+  const emojiList = NODE_ICON_EMOJIS.join(' ');
   return `Você é um especialista em glossários e explicações conceituais.
 
-TAREFA: Escreva uma definição ou explicação curta (1–3 frases, máx 240 caracteres) do termo abaixo, no contexto do mapa mental em que ele aparece.
+TAREFA:
+1) Escreva uma definição ou explicação curta (1–3 frases, máx 240 caracteres) do termo abaixo, no contexto do mapa mental.
+2) Escolha 3 emojis da lista abaixo que melhor representem o termo/tema visualmente (em ordem de preferência).
 
 TERMO: ${topic}
 MAPA: ${mapTitle}
 CONTEXTO NO MAPA (caminho hierárquico): ${pathFromRoot}
 ${themeCtx}
 
-Regras:
-- Direto, sem redundância, em português.
-- Explique o que é e como se relaciona ao tema do mapa.
-- Máximo 240 caracteres.
+EMOJIS DISPONÍVEIS (escolha exatamente um): ${emojiList}
 
-Retorne APENAS o texto da definição, sem aspas, sem prefixos como "Definição:" ou "Explicação:".`;
+Regras:
+- Definição: direto, sem redundância, em português. Explique o que é e como se relaciona ao tema do mapa. Máx 240 caracteres.
+- Ícones: escolha 3 emojis da lista acima, os mais apropriados para o conceito (em ordem de preferência).
+
+Retorne APENAS um JSON válido, sem markdown, sem texto antes ou depois:
+{"definition":"sua definição aqui","icons":["emoji1","emoji2","emoji3"]}`;
 }
 

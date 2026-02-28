@@ -29,6 +29,8 @@ export interface MindElixirNode {
   };
   tags?: string[];
   icons?: string[];
+  /** Ícones sugeridos pela IA ao gerar definição (aparecem no seletor de ícones). */
+  suggestedIcons?: string[];
   hyperLink?: string;
   /** Optional thumbnail URL (e.g., YouTube preview) rendered on the root node. */
   thumbnailUrl?: string;
@@ -108,6 +110,8 @@ export interface SavedMap {
   mindElixirData: MindElixirData;
   article: string;
   imageUrl?: string;
+  /** Múltiplas imagens (modo aprofundado). imageUrl mantém a primeira para compatibilidade. */
+  imageUrls?: string[];
   thumbnail?: string;
   tags: string[];
   createdAt: string;
@@ -117,6 +121,10 @@ export interface SavedMap {
 	sources?: DeepThoughtSource[];
 	/** Optional: mermaid diagram suggested/produced by the LLM. */
 	mermaid?: MermaidDiagram;
+	/** Referencial teórico: teorias, autores e teorias conectadas (modo aprofundado / pensamento_profundo). */
+	referencialTeorico?: string;
+	/** Perfil de cores do mapa (id de COLOR_PROFILES). */
+	colorProfile?: string;
 	/** UI-only flag persisted per map: controls whether node definitions/details are shown globally or only for the selected node. */
 	detailsEnabled?: boolean;
 	/** ISO timestamp of when this map was last successfully synced to the server. */

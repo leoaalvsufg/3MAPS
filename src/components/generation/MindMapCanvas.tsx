@@ -20,7 +20,25 @@ import {
 } from '@xyflow/react';
 import { Plus, Trash2, Smile, X } from 'lucide-react';
 import { normalizeMindElixirData } from '@/lib/normalizeMindElixirData';
+import { getProfileVars } from '@/lib/colorProfiles';
+import { useSettingsStore } from '@/stores/settings-store';
 import type { MindElixirData, MindElixirNode } from '@/types/mindmap';
+
+function useIsDark(): boolean {
+  const theme = useSettingsStore((s) => s.theme);
+  const [systemDark, setSystemDark] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const fn = () => setSystemDark(mq.matches);
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+  if (theme === 'dark') return true;
+  if (theme === 'light') return false;
+  return systemDark;
+}
 
 interface MindMapCanvasProps {
   data: MindElixirData;
@@ -42,6 +60,8 @@ interface MindMapCanvasProps {
 	 * - false: show definitions only for the selected node
 	 */
 	detailsEnabled?: boolean;
+	/** Perfil de cores (id de COLOR_PROFILES). */
+	colorProfile?: string;
 }
 
 type MindmapActions = {
@@ -64,6 +84,7 @@ type MindmapNodeData = {
 	definition?: string;
 	showDefinition?: boolean;
 	icons?: string[];
+	suggestedIcons?: string[];
 	hyperLink?: string;
 	thumbnailUrl?: string;
 	isRoot?: boolean;
@@ -209,6 +230,31 @@ function MindmapNode({ id, data, selected }: NodeProps<Node<MindmapNodeData>>) {
                   role="listbox"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {(data.suggestedIcons?.length ?? 0) > 0 && (
+                    <div className="mb-3">
+                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                        Sugeridos para este tema
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(data.suggestedIcons ?? []).map((emoji, i) => (
+                          <button
+                            key={`sug-${i}`}
+                            type="button"
+                            className={`min-w-[36px] min-h-[36px] w-9 h-9 flex items-center justify-center text-xl rounded-lg transition-colors shrink-0 ${
+                              icon === emoji ? 'bg-primary/20 ring-2 ring-primary/40' : 'hover:bg-muted/80 active:scale-95'
+                            }`}
+                            onClick={() => {
+                              updateIcons(id, [emoji]);
+                              setShowIconPicker(false);
+                            }}
+                            title={emoji}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-5 gap-2 w-full">
                     {EMOJI_QUICK_PICK.map((emoji, i) => (
                       <button
@@ -365,6 +411,7 @@ function buildLayout(
         label: n.topic,
         definition: n.definition || undefined,
         icons: n.icons ?? [],
+        suggestedIcons: n.suggestedIcons ?? undefined,
         hyperLink: n.hyperLink || undefined,
         thumbnailUrl: n.thumbnailUrl || undefined,
         isRoot: n.id === 'root',
@@ -428,7 +475,7 @@ function buildLayout(
   return { nodes, edges };
 }
 
-export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled }: MindMapCanvasProps) {
+export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, detailsEnabled, colorProfile }: MindMapCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
@@ -578,11 +625,17 @@ export function MindMapCanvas({ data, onReady, onChange, onSelectionChange, deta
     });
   }, [instance, layoutFingerprint]);
 
+  const isDark = useIsDark();
+  const profileStyle = useMemo(() => {
+    const vars = getProfileVars(colorProfile, isDark);
+    return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v]));
+  }, [colorProfile, isDark]);
+
   return (
     <div
       ref={wrapperRef}
       className="mindmap-flow w-full h-full"
-      style={{ minHeight: 600 }}
+      style={{ minHeight: 600, ...profileStyle }}
       role="img"
       aria-label={`Mapa mental: ${safeData.nodeData?.topic ?? 'Mapa mental'}`}
       tabIndex={0}
