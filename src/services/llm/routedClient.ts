@@ -123,7 +123,7 @@ export async function callRoutedMultimodal(
     const status = await fetchLlmStatus();
     if (status.configured) {
       const opts = await fetchLlmOptions();
-      const hasGemini = opts.some((o) => o.provider === 'gemini');
+      const hasGemini = opts.options.some((o: { provider: string }) => o.provider === 'gemini');
       if (hasGemini) {
         return await callServerLlmMultimodal(parts, {
           model,
