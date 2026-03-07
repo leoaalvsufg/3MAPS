@@ -252,6 +252,19 @@ export async function getUserById(userId) {
 }
 
 /**
+ * Get user profile by Stripe customer ID.
+ * @param {string} stripeCustomerId
+ * @returns {Promise<UserProfile | null>}
+ */
+export async function getUserByStripeCustomerId(stripeCustomerId) {
+  if (!stripeCustomerId || typeof stripeCustomerId !== 'string') return null;
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM users WHERE stripe_customer_id = ?').get(stripeCustomerId.trim());
+  if (!row) return null;
+  return rowToProfile(row);
+}
+
+/**
  * Update user fields (plan, email, isActive, isAdmin, password).
  * @param {string} username
  * @param {{ plan?: string, email?: string, photoUrl?: string | null, extraCredits?: number, isActive?: boolean, isAdmin?: boolean, password?: string, stripeCustomerId?: string | null }} updates

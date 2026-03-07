@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" translate="no">
   <head>
     <meta charset="UTF-8" />
     <script>
@@ -8,13 +8,22 @@
         setTimeout(function() {
           var root = document.getElementById('root');
           if (!root || root.innerHTML.indexOf('Erro ao carregar') >= 0) return;
-          root.innerHTML = '<div style="padding:24px;font-family:system-ui,sans-serif;max-width:600px;margin:40px auto"><h1 style="color:#b91c1c">Erro ao carregar</h1><pre style="background:#fef2f2;padding:16px;border-radius:8px;overflow:auto;font-size:13px;white-space:pre-wrap">' + (msg || 'Erro desconhecido').replace(/</g,'&lt;') + '</pre><button onclick="location.reload()" style="margin-top:16px;padding:8px 16px;cursor:pointer">Recarregar</button></div>';
+          if (!msg || msg === 'Erro desconhecido') return;
+          if (root.innerHTML.indexOf('Entrar') >= 0 || root.innerHTML.indexOf('3Maps') >= 0) return;
+          root.innerHTML = '<div style="padding:24px;font-family:system-ui,sans-serif;max-width:600px;margin:40px auto"><h1 style="color:#b91c1c">Erro ao carregar</h1><pre style="background:#fef2f2;padding:16px;border-radius:8px;overflow:auto;font-size:13px;white-space:pre-wrap">' + String(msg).replace(/</g,'&lt;') + '</pre><button onclick="location.reload()" style="margin-top:16px;padding:8px 16px;cursor:pointer">Recarregar</button></div>';
         }, 100);
       }
       window.addEventListener('error', function(e) {
-        // ResizeObserver loop: aviso benigno do navegador, não quebra a app
         var msg = (e.error && e.error.message) || e.message || '';
-        if (typeof msg === 'string' && /ResizeObserver/i.test(msg)) {
+        if (typeof msg !== 'string') msg = '';
+        // ResizeObserver loop: aviso benigno do navegador, não quebra a app
+        if (/ResizeObserver/i.test(msg)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return true;
+        }
+        // removeChild: causado por tradutor do navegador (Chrome/Edge) ao modificar DOM de portais Radix
+        if (/removeChild|not a child of this node/i.test(msg)) {
           e.stopImmediatePropagation();
           e.preventDefault();
           return true;
@@ -24,8 +33,13 @@
         showAppError(displayMsg);
       }, true);
       window.addEventListener('unhandledrejection', function(e) {
+        var msg = e.reason && (e.reason.message || String(e.reason)) || '';
+        if (/removeChild|not a child of this node/i.test(msg)) {
+          e.preventDefault();
+          return;
+        }
         window.__APP_ERROR__ = e.reason;
-        showAppError(e.reason && (e.reason.message || String(e.reason)) || 'Promise rejeitada');
+        showAppError(msg || 'Promise rejeitada');
       });
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

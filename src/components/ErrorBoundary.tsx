@@ -17,6 +17,10 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): State {
+    const msg = error?.message ?? '';
+    if (/removeChild|not a child of this node/i.test(msg)) {
+      return { hasError: false, error: null };
+    }
     return { hasError: true, error };
   }
 

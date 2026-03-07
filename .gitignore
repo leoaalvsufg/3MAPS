@@ -37,6 +37,9 @@ screenshots/
 # Backup zips
 *.zip
 
+# Deploy artifact (gerado por npm run pack)
+3maps-deploy.tar.gz
+
 # Firebase service account key (never commit)
 server/firebase-service-account.json
 maps-dc9df-firebase-adminsdk-fbsvc-0767bf295a.json

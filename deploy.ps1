@@ -7,7 +7,7 @@ $PASS = if ($env:TMAPS_PASS) { $env:TMAPS_PASS } else { "Senh@01020304" }
 $SERVER = "63.141.232.205"
 $USER = "usuario"
 
-Write-Host "=== Deploy 3Maps v0.1.15 ===" -ForegroundColor Cyan
+Write-Host "=== Deploy 3Maps v0.1.16 ===" -ForegroundColor Cyan
 
 # Tentar Posh-SSH (suporta senha)
 $poshSsh = Get-Module -ListAvailable Posh-SSH | Select-Object -First 1

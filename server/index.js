@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { deleteMap, getMap, listMaps, putMap, validateMapId, validateUsername, getDataDir } from './storage.js';
 import { checkRateLimit } from './rateLimit.js';
 import { generateToken, verifyToken, verifyApiToken } from './auth.js';
-import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser, consumeExtraCredits, listCreditLedger, addExtraCredits } from './users.js';
+import { createUser, validateCredentials, validateAuthUsername, validatePassword, getUser, getUserByEmail, getUserByStripeCustomerId, getOrCreateUserFromFirebase, migrateFilesystemUsers, listUsers, updateUser, consumeExtraCredits, listCreditLedger, addExtraCredits } from './users.js';
 import { verifyFirebaseIdToken, isFirebaseAdminConfigured } from './firebaseAdmin.js';
 import { getUsage, incrementMapCount, incrementChatCount } from './usage.js';
 import { logger } from './logger.js';
@@ -674,6 +674,7 @@ async function createStripeCreditsCheckoutSession({
   params.set('line_items[0][quantity]', '1');
   params.set('success_url', successUrl);
   params.set('cancel_url', cancelUrl);
+  params.set('client_reference_id', username);
   params.set('metadata[username]', username);
   params.set('metadata[targetCredits]', String(targetCredits));
   if (customerId && /^cus_/.test(customerId)) {
@@ -2120,10 +2121,22 @@ const server = http.createServer(async (req, res) => {
 
       if (event.type === 'checkout.session.completed') {
         const session = event.data?.object;
-        const username = session?.metadata?.username;
+        let username = session?.metadata?.username || session?.client_reference_id || null;
         const targetPlan = (session?.metadata?.targetPlan ?? '').toLowerCase();
         const targetCredits = parseInt(session?.metadata?.targetCredits ?? '0', 10);
         const customerId = typeof session?.customer === 'string' ? session.customer : null;
+
+        // Fallback: se username não veio no metadata, tenta buscar por Stripe customer_id ou email
+        if (!username && targetCredits > 0) {
+          if (customerId) {
+            const profileByCustomer = await getUserByStripeCustomerId(customerId);
+            if (profileByCustomer) username = profileByCustomer.username;
+          }
+          if (!username && session?.customer_email) {
+            const profileByEmail = await getUserByEmail(session.customer_email);
+            if (profileByEmail) username = profileByEmail.username;
+          }
+        }
 
         if (username && targetCredits > 0) {
           try {
@@ -2132,10 +2145,13 @@ const server = http.createServer(async (req, res) => {
               addExtraCredits(username, targetCredits, {
                 reason: 'Compra via Stripe',
                 createdBy: 'stripe_webhook',
+                requestId: session?.id || null,
               });
               if (customerId) await updateUser(username, { stripeCustomerId: customerId });
               logActivity({ username, action: 'billing_credits_purchased', details: { credits: targetCredits } });
               logger.info('User credits added via Stripe webhook', { username, credits: targetCredits });
+            } else if (profile?.isAdmin) {
+              logger.info('Stripe webhook: admin user skipped for credits', { username });
             }
           } catch (err) {
             logger.error('Failed to add credits from webhook', {
@@ -2145,6 +2161,13 @@ const server = http.createServer(async (req, res) => {
             });
             return await sendJson(res, 500, { error: 'Erro ao adicionar créditos' }, corsHeaders ?? {});
           }
+        } else if (targetCredits > 0 && !username) {
+          logger.warn('Stripe webhook: credits purchase but no username found', {
+            sessionId: session?.id,
+            customerId,
+            targetCredits,
+            metadata: session?.metadata,
+          });
         } else if (username && (targetPlan === 'premium' || targetPlan === 'enterprise')) {
           try {
             const profile = await getUser(username);

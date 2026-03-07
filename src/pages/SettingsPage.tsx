@@ -53,7 +53,7 @@ export function SettingsPage() {
                 </div>
               </div>
               <a
-                href="mailto:contato@3maps.com"
+                href="mailto:contato@prezenzaa.com.br"
                 className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors"
               >
                 <Building2 className="h-4 w-4" />
